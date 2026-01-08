@@ -1,0 +1,67 @@
+/**
+ * YouTube 페이지에 주입될 스타일
+ */
+
+/* 트랙분리 버튼 스타일 */
+#yt-track-separator-btn {
+  padding: 8px 12px !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  transition: all 0.3s ease !important;
+  box-shadow: 0 4px 6px rgba(102, 126, 234, 0.4) !important;
+}
+
+#yt-track-separator-btn:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 12px rgba(102, 126, 234, 0.6) !important;
+}
+
+#yt-track-separator-btn:active {
+  transform: translateY(0) !important;
+}
+
+/* 팝업 컨테이너 */
+#yt-separator-panel,
+#yt-sync-player-container {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  color: #1f2937 !important;
+  background: white !important;
+}
+
+/* 스크롤바 스타일 */
+#yt-sync-player-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+#yt-sync-player-container::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+#yt-sync-player-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+#yt-sync-player-container::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* 진행률 바 애니메이션 */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.progress-pulse {
+  animation: pulse 1s ease-in-out infinite;
+}

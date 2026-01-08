@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube 트랙분리</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 400px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #1f2937;
+        }
+
+        .container {
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .content {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .info-box {
+            background: #eff6ff;
+            border-left: 4px solid #3b82f6;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            color: #1e40af;
+            line-height: 1.5;
+        }
+
+        .feature-list {
+            margin-bottom: 15px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 0;
+            font-size: 13px;
+            color: #4b5563;
+        }
+
+        .feature-item::before {
+            content: '✓';
+            color: #22c55e;
+            font-weight: bold;
+            margin-right: 8px;
+            font-size: 16px;
+        }
+
+        .server-status {
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .server-status.online {
+            background: #f0fdf4;
+            color: #166534;
+        }
+
+        .server-status.offline {
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 13px;
+            transition: transform 0.2s ease;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 12px;
+            color: #9ca3af;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎵 YouTube 트랙분리</h1>
+            <p>음악을 분리하고 혼합하기</p>
+        </div>
+
+        <div class="content">
+            <div class="info-box">
+                유튜브 페이지에서 <strong>'🎵 트랙분리'</strong> 버튼을 클릭하여 음악을 분리하세요.
+            </div>
+
+            <div class="feature-list">
+                <div class="feature-item">보컬, 베이스, 드럼, 기타 분리</div>
+                <div class="feature-item">각 트랙 독립적 볼륨 조절</div>
+                <div class="feature-item">원본과 세밀한 시간 동기화</div>
+                <div class="feature-item">실시간 재생 제어</div>
+                <div class="feature-item">GPU 가속화 지원</div>
+            </div>
+
+            <div id="server-status" class="server-status offline">
+                ⚠ 서버 확인 중...
+            </div>
+
+            <div class="button-group">
+                <button class="btn-primary" onclick="openSettings()">⚙️ 설정</button>
+                <button class="btn-secondary" onclick="openHelp()">❓ 도움말</button>
+            </div>
+
+            <div class="footer">
+                <p>버전 1.0.0 | Windows 11 Pro compatible</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

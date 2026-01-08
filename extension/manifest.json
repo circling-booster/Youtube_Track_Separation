@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube 트랙분리",
+  "version": "1.0.0",
+  "description": "유튜브 음악을 보컬, 베이스, 드럼, 기타로 분리하고 각각 제어",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://localhost:5010/*",
+    "http://localhost:5010/*",
+    "http://127.0.0.1:5010/*",
+    "ws://managemental-deceivably-zara.ngrok-free.dev/*",
+    "ws://localhost:5010/*",
+    "ws://127.0.0.1:5010/*"
+  ],
+  "action": {
+    "default_title": "YouTube 트랙분리",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "socket.io.js",
+        "ui-templates.js",
+        "content.js"
+      ],
+      "css": [],
+      "run_at": "document_end",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "socket.io.js"
+      ],
+      "matches": [
+        "https://www.youtube.com/*"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  }
+}
