@@ -161,7 +161,7 @@ class YouTubeTrackSeparator {
         this.startAutoProcess();
       }
       this.hideCountdownUI();
-    }, 10000);
+    }, 1000);
   }
 
   updateCountdownDisplay() {
@@ -362,7 +362,7 @@ class CustomAudioPlayer {
   constructor(tracks) {
     this.tracks = tracks;
     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    this.volumes = { vocal: 100, bass: 100, drum: 100, other: 30 };
+    this.volumes = { vocal: 35, bass: 100, drum: 100, other: 100 };
     this.audioBuffers = {};
     this.activeSources = [];
 

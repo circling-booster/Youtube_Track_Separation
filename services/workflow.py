@@ -12,88 +12,120 @@ def process_video_background(video_id, model, client_sid):
         output_dir = DOWNLOADS_DIR / video_id
         output_dir.mkdir(exist_ok=True)
 
-        # 1. 다운로드 단계
-        logger.info(f"[{video_id}] 1. 다운로드 시작")
-        socketio.emit('progress', {
-            'video_id': video_id,
-            'stage': 'download',
-            'progress': 0,
-            'message': 'YouTube 오디오 다운로드 중...'
-        }, room=client_sid)
-
-        mp3_path = downloader.download(video_id, output_dir)
-        if not mp3_path:
-            raise Exception("MP3 다운로드 실패")
+        # ==========================================
+        # 0. 기존 처리 결과 확인 (캐싱 전략)
+        # ==========================================
+        # 이미 분리된 트랙이 있는지 확인
+        existing_tracks = processor.get_separated_tracks(str(output_dir))
+        required_keys = {'vocal', 'bass', 'drum', 'other'}
         
-        logger.info(f"[{video_id}] MP3 다운로드 완료: {mp3_path}")
-        socketio.emit('progress', {
-            'video_id': video_id,
-            'stage': 'download',
-            'progress': 100,
-            'message': 'MP3 다운로드 완료'
-        }, room=client_sid)
-
-        # 2. DEMUCS 분리 단계
-        logger.info(f"[{video_id}] 2. DEMUCS 분리 시작")
-        socketio.emit('progress', {
-            'video_id': video_id,
-            'stage': 'demucs',
-            'progress': 10,
-            'message': 'DEMUCS 모델 로딩 및 트랙 분리 시작... (예상: 1-5분)'
-        }, room=client_sid)
-
-        # 진행률 콜백 함수
-        def demucs_progress(progress, track_name):
-            socketio.emit('track_chunk', {
+        # 필수 트랙이 모두 존재하는지 확인
+        if existing_tracks and required_keys.issubset(existing_tracks.keys()):
+            logger.info(f"[{video_id}] ✅ 기존 처리 결과 발견. 다운로드 및 분리 작업을 건너뜁니다.")
+            
+            socketio.emit('progress', {
                 'video_id': video_id,
-                'track': track_name,
-                'progress': progress
+                'stage': 'cache_hit',
+                'progress': 100,
+                'message': '기존 작업 결과를 불러오는 중입니다...'
             }, room=client_sid)
 
-        success = processor.process_and_stream(
-            mp3_path, 
-            output_dir, 
-            model=model,
-            progress_callback=demucs_progress
-        )
-
-        if not success:
-            raise Exception("DEMUCS 처리 실패")
+            # 기존 트랙 정보를 사용
+            tracks = existing_tracks
             
-        logger.info(f"[{video_id}] DEMUCS 처리 완료")
+            # 동기화 정보는 새로 계산하지 않고 초기화 (스트리밍 목적이므로 분석 생략)
+            # 필요하다면 여기서 sync_processor.analyze_track()을 호출할 수 있습니다.
+            sync_processor.reset()
 
-        # 3. 동기화 및 후처리
-        logger.info(f"[{video_id}] 3. 후처리 및 동기화 분석")
-        socketio.emit('progress', {
-            'video_id': video_id,
-            'stage': 'sync',
-            'progress': 85,
-            'message': '오디오 동기화 및 정합성 검증 중...'
-        }, room=client_sid)
+        else:
+            # ==========================================
+            # 기존 결과가 없으면 전체 프로세스 실행
+            # ==========================================
+            
+            # 1. 다운로드 단계
+            logger.info(f"[{video_id}] 1. 다운로드 시작")
+            socketio.emit('progress', {
+                'video_id': video_id,
+                'stage': 'download',
+                'progress': 0,
+                'message': 'YouTube 오디오 다운로드 중...'
+            }, room=client_sid)
 
-        # 분리된 트랙 정보 수집
-        tracks = processor.get_separated_tracks(str(output_dir))
-        if not tracks:
-            raise Exception("분리된 트랙을 찾을 수 없습니다")
+            mp3_path = downloader.download(video_id, output_dir)
+            if not mp3_path:
+                raise Exception("MP3 다운로드 실패")
+            
+            logger.info(f"[{video_id}] MP3 다운로드 완료: {mp3_path}")
+            socketio.emit('progress', {
+                'video_id': video_id,
+                'stage': 'download',
+                'progress': 100,
+                'message': 'MP3 다운로드 완료'
+            }, room=client_sid)
 
-        logger.info(f"[{video_id}] 발견된 트랙: {list(tracks.keys())}")
+            # 2. DEMUCS 분리 단계
+            logger.info(f"[{video_id}] 2. DEMUCS 분리 시작")
+            socketio.emit('progress', {
+                'video_id': video_id,
+                'stage': 'demucs',
+                'progress': 10,
+                'message': 'DEMUCS 모델 로딩 및 트랙 분리 시작... (예상: 1-5분)'
+            }, room=client_sid)
 
-        # 동기화 분석 수행
-        for track_name, track_info in tracks.items():
-            logger.info(f"[{video_id}] 분석 중: {track_name}")
-            sync_processor.analyze_track(track_info['path'])
+            # 진행률 콜백 함수
+            def demucs_progress(progress, track_name):
+                socketio.emit('track_chunk', {
+                    'video_id': video_id,
+                    'track': track_name,
+                    'progress': progress
+                }, room=client_sid)
 
-        logger.info(f"[{video_id}] 동기화 검증 완료")
-        
-        socketio.emit('progress', {
-            'video_id': video_id,
-            'stage': 'sync',
-            'progress': 95,
-            'message': '최종 파일 정리 중...'
-        }, room=client_sid)
+            success = processor.process_and_stream(
+                mp3_path, 
+                output_dir, 
+                model=model,
+                progress_callback=demucs_progress
+            )
 
-        # 4. 완료 처리
-        logger.info(f"[{video_id}] 4. 작업 완료")
+            if not success:
+                raise Exception("DEMUCS 처리 실패")
+                
+            logger.info(f"[{video_id}] DEMUCS 처리 완료")
+
+            # 3. 동기화 및 후처리
+            logger.info(f"[{video_id}] 3. 후처리 및 동기화 분석")
+            socketio.emit('progress', {
+                'video_id': video_id,
+                'stage': 'sync',
+                'progress': 85,
+                'message': '오디오 동기화 및 정합성 검증 중...'
+            }, room=client_sid)
+
+            # 분리된 트랙 정보 수집
+            tracks = processor.get_separated_tracks(str(output_dir))
+            if not tracks:
+                raise Exception("분리된 트랙을 찾을 수 없습니다")
+
+            logger.info(f"[{video_id}] 발견된 트랙: {list(tracks.keys())}")
+
+            # 동기화 분석 수행
+            for track_name, track_info in tracks.items():
+                logger.info(f"[{video_id}] 분석 중: {track_name}")
+                sync_processor.analyze_track(track_info['path'])
+
+            logger.info(f"[{video_id}] 동기화 검증 완료")
+            
+            socketio.emit('progress', {
+                'video_id': video_id,
+                'stage': 'sync',
+                'progress': 95,
+                'message': '최종 파일 정리 중...'
+            }, room=client_sid)
+
+        # ==========================================
+        # 4. 완료 처리 (공통)
+        # ==========================================
+        logger.info(f"[{video_id}] 4. 작업 완료 및 클라이언트 응답")
         
         # 클라이언트용 경로 변환 (절대 경로 -> 상대 경로)
         client_tracks = {}

@@ -178,7 +178,7 @@ class CustomAudioPlayer {
     constructor(tracks) {
         this.tracks = tracks;
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        this.volumes = { vocal: 100, bass: 100, drum: 100, other: 100 };
+        this.volumes = { vocal: 33, bass: 100, drum: 100, other: 100 };
         this.audioBuffers = {};
         this.activeSources = [];
 
