@@ -1,109 +1,152 @@
+"""
+Stable-Whisper를 이용한 강제 정렬 (모듈화 버전)
+- 함수 기반 아키텍처
+- Word-level timestamps with duration 유지: [mm:ss.xx] <mm:ss.xx> text
+"""
+
 import stable_whisper
 import torch
-import os
 import datetime
+import logging
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger(__name__)
 
-
-# 파일 설정
-AUDIO_FILE =  os.path.join(base_dir, 'input.mp3') 
-LYRIC_TEXT_FILE = os.path.join(base_dir, 'lyric.txt')
-OUTPUT_LRC_FILE = os.path.join(base_dir, 'vocal_forced.lrc')
-
-def format_timestamp(seconds):
-    """초(seconds)를 타임스탬프 문자열로 변환 (분:초.밀리초)"""
+def format_timestamp(seconds: float) -> str:
+    """
+    초(seconds)를 타임스탬프 문자열로 변환
+    포맷: mm:ss.xx (분:초.밀리초)
+    """
     if seconds is None:
         return "00:00.00"
+    
     td = datetime.timedelta(seconds=seconds)
     total_seconds = int(td.total_seconds())
     minutes = total_seconds // 60
     seconds_remainder = total_seconds % 60
     milliseconds = int(td.microseconds / 10000)
+    
     return f"{minutes:02d}:{seconds_remainder:02d}.{milliseconds:02d}"
 
-def save_lrc_with_duration(result, output_path):
+def format_lrc_with_duration(result, output_format: str = 'lrc') -> str:
     """
-    stable-ts 결과에서 시작(start)과 끝(end) 시간을 모두 추출하여 저장
-    형식: [mm:ss.xx] <mm:ss.xx> 단어
+    Stable-Whisper 결과를 LRC 포맷으로 변환
+    
+    포맷: [mm:ss.xx] <mm:ss.xx> 단어 (시작 시간, 종료 시간, 텍스트)
+    
+    Args:
+        result: stable-whisper의 align 결과
+        output_format: 'lrc' (기본값)
+    
+    Returns:
+        str: LRC 포맷의 가사
     """
-    count = 0
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write("[by:AiPlugs]\n")
-        
-        # result.segments는 문장 단위입니다.
+    lines = ["[by:AiPlugs]"]
+    word_count = 0
+    
+    try:
         for segment in result.segments:
-            # 단어(words) 리스트 추출
-            words = getattr(segment, 'words', None) or segment.get('words')
+            words = getattr(segment, 'words', None) or segment.get('words', [])
             
-            if words:
-                for word in words:
-                    # 시작, 끝, 텍스트 추출
-                    start = getattr(word, 'start', None) or word.get('start')
-                    end = getattr(word, 'end', None) or word.get('end')
-                    text = getattr(word, 'word', None) or word.get('word')
+            if not words:
+                continue
+            
+            for word in words:
+                start = getattr(word, 'start', None) or word.get('start')
+                end = getattr(word, 'end', None) or word.get('end')
+                text = getattr(word, 'word', None) or word.get('word')
+                
+                if start is not None and text:
+                    # 끝 시간이 없으면 시작 시간 + 0.5초
+                    if end is None:
+                        end = start + 0.5
                     
-                    if start is not None and text:
-                        # 끝 시간이 없는 경우 시작 시간 + 0.5초로 임시 처리
-                        if end is None: end = start + 0.5
-
-                        ts_start = format_timestamp(start)
-                        ts_end = format_timestamp(end)
-                        
-                        # 사용자 지정 포맷: [시작] <끝> 텍스트
-                        f.write(f"[{ts_start}] <{ts_end}> {text.strip()}\n")
-                        count += 1
-    return count
-
-def main():
-    print("--- 강제 정렬(Forced Alignment) : Start & End Time ---")
+                    ts_start = format_timestamp(start)
+                    ts_end = format_timestamp(end)
+                    
+                    # LRC 포맷: [시작] <끝> 단어
+                    line = f"[{ts_start}] <{ts_end}> {text.strip()}"
+                    lines.append(line)
+                    word_count += 1
     
-    if not os.path.exists(LYRIC_TEXT_FILE):
-        print("오류: 가사 파일이 반드시 필요합니다.")
-        return
-        
-    with open(LYRIC_TEXT_FILE, 'r', encoding='utf-8') as f:
-        lyric_text = f.read()
-
-    # [수정됨] 가사 전처리: 괄호 기호 '(', ')' 제거
-    original_len = len(lyric_text)
-    lyric_text = lyric_text.replace("(", "").replace(")", "").replace(",", "")#.replace(")", "")
-    
-    if len(lyric_text) != original_len:
-        print("알림: 가사 텍스트에서 괄호 기호를 제거했습니다.")
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"모델 로딩 중 (medium) - Device: {device}")
-    
-    try:
-        model = stable_whisper.load_model('medium', device=device)
     except Exception as e:
-        print(f"모델 로드 실패: {e}")
-        return
+        logger.error(f"LRC 변환 오류: {e}")
+        raise
+    
+    logger.info(f"✓ {word_count}개 단어 정렬 완료")
+    return '\n'.join(lines)
 
-    print("정렬 수행 중...")
+def align_lyrics(
+    audio_path: str,
+    text: str,
+    device: str = 'cuda',
+    language: str = 'ko'
+) -> str:
+    """
+    음성과 텍스트를 강제 정렬하여 LRC 생성
+    
+    Args:
+        audio_path: 오디오 파일 경로 (MP3, WAV 등)
+        text: 정렬할 텍스트 (순수 텍스트)
+        device: 'cuda' 또는 'cpu'
+        language: 언어 코드 ('ko', 'en', 등)
+    
+    Returns:
+        str: LRC 포맷의 가사 ([mm:ss.xx] <mm:ss.xx> 텍스트 포맷)
+    """
+    
+    logger.info(f"[Align] 시작")
+    logger.info(f" - 오디오: {audio_path}")
+    logger.info(f" - 언어: {language}")
+    logger.info(f" - 장치: {device}")
+    logger.info(f" - 텍스트 길이: {len(text)} 글자")
+    
     try:
-        # GPU 가속 정렬 수행
+        # 텍스트 전처리 (괄호 제거)
+        original_len = len(text)
+        text = text.replace("(", "").replace(")", "").replace(",", "")
+        
+        if len(text) != original_len:
+            logger.info(f"[Align] 전처리 완료: {original_len} → {len(text)} 글자")
+        
+        # Stable-Whisper 모델 로드
+        logger.info(f"[Align] 모델 로드 중 (medium)...")
+        model = stable_whisper.load_model('medium', device=device)
+        logger.info(f"[Align] ✓ 모델 로드 완료")
+        
+        # 강제 정렬 수행
+        logger.info(f"[Align] 정렬 수행 중...")
         result = model.align(
-            AUDIO_FILE, 
-            lyric_text, 
-            language='ko',
+            audio_path,
+            text,
+            language=language,
             original_split=True
         )
-    except Exception as e:
-        print(f"정렬 중 오류 발생: {e}")
-        return
-
-    print("파일 저장 중 (Duration 포함)...")
-    try:
-        word_count = save_lrc_with_duration(result, OUTPUT_LRC_FILE)
+        logger.info(f"[Align] ✓ 정렬 완료")
         
-        print(f"--- 완료 ---")
-        print(f"총 {word_count}개의 단어 싱크 저장됨")
-        print(f"결과 파일: {os.path.abspath(OUTPUT_LRC_FILE)}")
+        # LRC 포맷 변환
+        lrc_content = format_lrc_with_duration(result, output_format='lrc')
         
+        return lrc_content
+    
     except Exception as e:
-        print(f"저장 중 치명적 오류: {e}")
+        logger.error(f"[Align] 정렬 실패: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
+    
+    finally:
+        # 메모리 해제
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info(f"[Align] ✓ 메모리 해제 완료")
 
+# 테스트 및 사용 예시
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO)
+    
+    # 예제
+    # audio_file = "vocal.wav"
+    # text = "Hello world this is a test"
+    # result = align_lyrics(audio_file, text, device='cuda', language='en')
+    # print(result)

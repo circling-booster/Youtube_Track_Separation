@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 import time
 from urllib.parse import quote
 
+
+
 class BugsLyricsCrawler:
     """벅스 뮤직 가사 자동 수집 크롤러"""
     
@@ -14,6 +16,7 @@ class BugsLyricsCrawler:
         }
     
     def search_track(self, song_name, artist_name=None, album_name=None):
+        print(self, song_name, artist_name=None, album_name=None)
         """
         곡을 검색하고 trackid를 반환
         
