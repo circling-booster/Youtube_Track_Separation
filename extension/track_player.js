@@ -24,6 +24,10 @@
             this._cachedVideo = null;
             this.rafId = null;
             this.isDragging = false;
+            
+            // UI 상태 관리
+            this.container = null;
+            this.minimizedIcon = null;
 
             // 바인딩
             this.updateLoop = this.updateLoop.bind(this);
@@ -174,10 +178,11 @@
         createUI() {
             if (!window.YTSepUITemplates?.customPlayerHTML) return;
             
-            const container = document.createElement('div');
-            container.id = 'yt-custom-player-ui';
-            container.className = 'yt-sep-ui';
-            container.style.cssText = `
+            // 메인 플레이어 컨테이너 생성
+            this.container = document.createElement('div');
+            this.container.id = 'yt-custom-player-ui';
+            this.container.className = 'yt-sep-ui';
+            this.container.style.cssText = `
                 position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
                 width: 90%; max-width: 800px;
                 background: rgba(15, 15, 15, 0.95);
@@ -185,20 +190,39 @@
                 border: 1px solid #444; border-radius: 16px; padding: 20px;
                 box-shadow: 0 10px 40px rgba(0,0,0,0.6); z-index: 2147483647;
                 display: flex; flex-direction: column; gap: 15px;
+                transition: opacity 0.2s ease;
             `;
             
-            container.innerHTML = window.YTSepUITemplates.customPlayerHTML([
+            this.container.innerHTML = window.YTSepUITemplates.customPlayerHTML([
                 'vocal', 'bass', 'drum', 'other'
             ]);
 
-            document.body.appendChild(container);
+            document.body.appendChild(this.container);
 
+            // 최소화된 아이콘 생성 (숨김 상태로 시작)
+            this.createMinimizedIcon();
+
+            // --- 이벤트 바인딩 ---
+
+            // 1. 닫기 버튼 (완전 종료)
             document.getElementById('cp-close-btn').onclick = () => this.destroy();
+
+            // 2. 최소화 버튼
+            document.getElementById('cp-minimize-btn').onclick = () => this.toggleMinimize(true);
+
+            // 3. 투명도 슬라이더
+            const opacitySlider = document.getElementById('cp-opacity-slider');
+            opacitySlider.oninput = (e) => {
+                this.container.style.opacity = e.target.value;
+            };
+
+            // 4. 재생/일시정지
             document.getElementById('cp-play-btn').onclick = () => {
                 const v = this.videoElement;
                 if(v) v.paused ? v.play() : v.pause();
             };
 
+            // 5. 진행바 (Seek)
             const progress = document.getElementById('cp-progress');
             progress.oninput = () => this.isDragging = true;
             progress.onchange = () => {
@@ -208,7 +232,8 @@
                 }
             };
 
-            container.querySelectorAll('input[data-track]').forEach(input => {
+            // 6. 볼륨 슬라이더
+            this.container.querySelectorAll('input[data-track]').forEach(input => {
                 input.oninput = (e) => {
                     const track = e.target.dataset.track;
                     const val = parseInt(e.target.value);
@@ -218,6 +243,39 @@
                     });
                 };
             });
+        }
+
+        createMinimizedIcon() {
+            this.minimizedIcon = document.createElement('div');
+            this.minimizedIcon.id = 'yt-sep-minimized-icon';
+            this.minimizedIcon.style.cssText = `
+                position: fixed; bottom: 20px; right: 20px;
+                width: 50px; height: 50px; border-radius: 50%;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                z-index: 2147483647; cursor: pointer;
+                display: none; align-items: center; justify-content: center;
+                font-size: 24px; color: white; border: 2px solid white;
+                transition: transform 0.2s;
+            `;
+            this.minimizedIcon.innerHTML = '🎹';
+            this.minimizedIcon.title = '플레이어 열기';
+            
+            this.minimizedIcon.onclick = () => this.toggleMinimize(false);
+            this.minimizedIcon.onmouseover = () => this.minimizedIcon.style.transform = 'scale(1.1)';
+            this.minimizedIcon.onmouseout = () => this.minimizedIcon.style.transform = 'scale(1.0)';
+            
+            document.body.appendChild(this.minimizedIcon);
+        }
+
+        toggleMinimize(minimize) {
+            if (minimize) {
+                this.container.style.display = 'none';
+                this.minimizedIcon.style.display = 'flex';
+            } else {
+                this.container.style.display = 'flex';
+                this.minimizedIcon.style.display = 'none';
+            }
         }
 
         formatTime(sec) {
@@ -233,8 +291,11 @@
             if (this._cachedVideo && this._cachedVideo._isHijacked) {
                 console.log('[Player] Destroyed. Reload to restore original audio context.');
             }
-            const ui = document.getElementById('yt-custom-player-ui');
-            if (ui) ui.remove();
+            
+            // UI 요소 제거
+            if (this.container) this.container.remove();
+            if (this.minimizedIcon) this.minimizedIcon.remove();
+            
             this._cachedVideo = null;
         }
     }

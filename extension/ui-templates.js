@@ -68,9 +68,29 @@
 
   function customPlayerHTML(tracks) {
     return `
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span id="cp-status" style="font-size:12px; color:#3ea6ff; font-weight:bold;">초기화 중...</span>
-        <button id="cp-close-btn" style="background:none; border:none; color:#666; cursor:pointer; font-size:16px;">✕</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span id="cp-status" style="font-size:12px; color:#3ea6ff; font-weight:bold;">초기화 중...</span>
+            
+            <div style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.1); padding:2px 8px; border-radius:12px;">
+                <span style="font-size:10px; color:#aaa;">👁️</span>
+                <input 
+                    type="range" 
+                    id="cp-opacity-slider" 
+                    min="0.2" 
+                    max="1.0" 
+                    step="0.05" 
+                    value="0.95" 
+                    style="width:60px; height:4px; accent-color:#aaa; cursor:pointer;"
+                    title="플레이어 투명도 조절"
+                >
+            </div>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+            <button id="cp-minimize-btn" title="최소화" style="background:none; border:none; color:#ccc; cursor:pointer; font-size:16px; font-weight:bold;">_</button>
+            <button id="cp-close-btn" title="종료" style="background:none; border:none; color:#ccc; cursor:pointer; font-size:16px;">✕</button>
+        </div>
       </div>
 
       <div style="display:flex; align-items:center; gap:15px;">
@@ -80,6 +100,7 @@
           style="
             width:45px; height:45px; border-radius:50%; background:#fff; color:#000;
             font-size:20px; display:flex; align-items:center; justify-content:center;
+            border:none; cursor:pointer;
           "
         >▶</button>
 
@@ -107,7 +128,7 @@
     `;
   }
 
-  // 전역으로 노출 (Content Script/일반 스크립트에서 import 없이 사용 가능)
+  // 전역으로 노출
   root.YTSepUITemplates = {
     setupPanelHTML,
     customPlayerHTML,
