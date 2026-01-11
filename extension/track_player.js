@@ -2,7 +2,8 @@
  * Hybrid Track Player Engine
  * - 기본 (1.0배속): AudioBuffer 모드 (정밀 싱크, 빠른 반응)
  * - 배속 (변속): HTMLAudioElement 모드 (피치 보존)
- * - [Fix] 볼륨 조절 실시간 동기화 (activeSourceNodes에 name 식별자 추가)
+ * - [Fix] 볼륨 조절 실시간 동기화
+ * - [New] 몰입 모드 (UI 토글) 지원
  */
 (function(root) {
     class AudioPlayer {
@@ -13,20 +14,17 @@
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             this.audioContext = new AudioContext();
             
-            // 볼륨 상태
             this.volumes = { vocal: 35, bass: 100, drum: 100, other: 100 };
             
-            // 리소스 저장소
-            this.resources = {}; // { name: { buffer, blobUrl, audioEl, gainNode } }
-            this.activeSourceNodes = []; // Buffer 모드용 소스 노드들
+            this.resources = {};
+            this.activeSourceNodes = [];
             
-            this.mode = 'buffer'; // 'buffer' | 'element'
+            this.mode = 'buffer'; 
             this._cachedVideo = null;
             this.rafId = null;
             this.container = null;
             this.minimizedIcon = null;
 
-            // 전체화면 핸들러 바인딩
             this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
             this.updateLoop = this.updateLoop.bind(this);
             this.handleVideoEvent = this.handleVideoEvent.bind(this);
@@ -63,6 +61,8 @@
                 this.container.classList.add('fs-mode');
             } else {
                 this.container.classList.remove('fs-mode');
+                // 전체화면 나가면 숨김 모드 해제 (선택사항, UX상 이게 자연스러움)
+                this.container.classList.remove('hide-peripherals');
             }
         }
 
@@ -183,7 +183,6 @@
                 
                 source.start(0, startTime);
                 
-                // [수정됨] name 속성을 함께 저장하여 추후 식별 가능하게 함
                 this.activeSourceNodes.push({ source, gain, name });
                 
                 res.element.pause();
@@ -257,12 +256,25 @@
 
             this.createMinimizedIcon();
 
+            // 이벤트 바인딩
             document.getElementById('cp-close-btn').onclick = () => this.destroy();
             document.getElementById('cp-minimize-btn').onclick = () => this.toggleMinimize(true);
             document.getElementById('cp-play-btn').onclick = () => {
                 const v = this.videoElement;
                 if(v) v.paused ? v.play() : v.pause();
             };
+
+            // [추가] UI 토글 버튼 이벤트
+            const toggleBtn = document.getElementById('cp-toggle-ui-btn');
+            if (toggleBtn) {
+                toggleBtn.onclick = () => {
+                    this.container.classList.toggle('hide-peripherals');
+                    // 아이콘 변경 (선택 사항)
+                    const isHidden = this.container.classList.contains('hide-peripherals');
+                    toggleBtn.innerHTML = isHidden ? '🔳' : '👁️'; 
+                    toggleBtn.style.opacity = isHidden ? '0.5' : '1.0';
+                };
+            }
             
             const progress = document.getElementById('cp-progress');
             progress.oninput = () => this.isDragging = true;
@@ -274,23 +286,18 @@
             const opacitySlider = document.getElementById('cp-opacity-slider');
             if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
 
-            // [수정됨] 볼륨 조절 이벤트 핸들러
             this.container.querySelectorAll('input[data-track]').forEach(input => {
                 input.oninput = (e) => {
                     const track = e.target.dataset.track;
                     const val = parseInt(e.target.value);
                     this.volumes[track] = val;
                     
-                    // 1. Buffer 모드 (현재 재생중인 노드 즉시 반영)
                     this.activeSourceNodes.forEach(node => {
                         if (node.name === track) {
-                            // 지퍼 노이즈 방지를 위해 0.05초에 걸쳐 부드럽게 변경 (선택사항이나 권장됨)
-                            // 여기서는 즉각적인 반응을 위해 값 직접 할당
                             node.gain.gain.value = val / 100;
                         }
                     });
 
-                    // 2. Element 모드 (항상 반영)
                     if (this.resources[track]) {
                         this.resources[track].elementGain.gain.value = val / 100;
                     }

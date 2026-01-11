@@ -1,5 +1,5 @@
 // yt-sep-ui-templates.js
-// 역할: UI HTML 및 반응형 CSS (전체화면 모드 지원)
+// 역할: UI HTML 및 반응형 CSS (전체화면 모드 지원 + UI 토글 기능 추가)
 
 (function (root) {
   function setupPanelHTML() {
@@ -85,7 +85,7 @@
             width: 90%; 
             max-width: 800px;
             background: rgba(15, 15, 15, 0.95); 
-            backdrop-filter: blur(10px); /* 이 속성이 전체화면에서 제거되어야 함 */
+            backdrop-filter: blur(10px); 
             border: 1px solid #444; 
             border-radius: 16px; 
             padding: 20px;
@@ -109,11 +109,20 @@
             padding: 10px; border-radius: 12px;
         }
 
-        /* 볼륨 슬라이더 컨테이너 (기본: 가로 정렬) */
+        /* 볼륨 슬라이더 컨테이너 */
         .sep-tracks-container {
             display: flex; gap: 15px; 
             background: #222; padding: 15px; border-radius: 10px;
+            transition: opacity 0.3s ease, visibility 0.3s; /* [추가] 부드러운 전환 */
         }
+        
+        /* [추가] 주변 요소 숨김 클래스 */
+        #yt-custom-player-ui.hide-peripherals .sep-tracks-container {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
         .sep-track-group {
             display: flex; flex-direction: column; align-items: center; flex: 1;
         }
@@ -136,14 +145,13 @@
         #yt-custom-player-ui.fs-mode {
             bottom: 0; left: 0; transform: none;
             width: 100%; height: 100%; max-width: none;
-            background: rgba(0, 0, 0, 0.0); /* 배경 투명 */
-            backdrop-filter: none; /* [수정됨] 전체 블러 효과 제거 */
+            background: rgba(0, 0, 0, 0.0); 
+            backdrop-filter: none;
             border: none; border-radius: 0;
             padding: 40px;
-            pointer-events: none; /* 배경 클릭 통과 */
+            pointer-events: none; 
         }
         
-        /* 전체화면에서 헤더 숨김 (최소화 버튼 등) */
         #yt-custom-player-ui.fs-mode .sep-player-header {
             display: none;
         }
@@ -159,7 +167,7 @@
             z-index: 100;
         }
 
-        /* 전체화면: 트랙 컨테이너 (레이아웃 해제) */
+        /* 전체화면: 트랙 컨테이너 */
         #yt-custom-player-ui.fs-mode .sep-tracks-container {
             background: transparent; padding: 0;
             display: block; width: 100%; height: 100%;
@@ -172,9 +180,9 @@
             background: rgba(0, 0, 0, 0.7);
             padding: 20px;
             border-radius: 16px;
-            backdrop-filter: blur(4px); /* 개별 박스만 블러 처리 */
+            backdrop-filter: blur(4px); 
             border: 1px solid rgba(255,255,255,0.1);
-            pointer-events: auto; /* 슬라이더 조작 가능 */
+            pointer-events: auto; 
             transition: transform 0.2s;
         }
         #yt-custom-player-ui.fs-mode .sep-track-group:hover {
@@ -187,7 +195,6 @@
         #yt-custom-player-ui.fs-mode .sep-track-other { bottom: 20%; left: 5%; } /* 좌하단 */
         #yt-custom-player-ui.fs-mode .sep-track-bass  { bottom: 20%; right: 5%; }/* 우하단 */
 
-        /* 전체화면: 라벨 및 슬라이더 크기 키움 */
         #yt-custom-player-ui.fs-mode .sep-track-label {
             font-size: 18px; color: #fff; margin-bottom: 15px;
         }
@@ -247,6 +254,16 @@
         </div>
 
         <span id="cp-total-time" style="font-size:12px; color:white; min-width:40px;">0:00</span>
+
+        <button
+          id="cp-toggle-ui-btn"
+          style="
+            background: transparent; border: 1px solid rgba(255,255,255,0.3); color: white;
+            border-radius: 4px; padding: 4px 8px; font-size: 14px; cursor: pointer;
+            margin-left: 10px; display: flex; align-items: center; justify-content: center;
+          "
+          title="UI 숨기기/보이기 (몰입 모드)"
+        >👁️</button>
       </div>
 
       <div class="sep-tracks-container">
