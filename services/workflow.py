@@ -1,15 +1,17 @@
 """
 통합 파이프라인: 다운로드 → 분리 → 정렬 → 응답
 VRAM 메모리 안전성 보장 & 스마트 캐싱 & 로직 통합
+수정사항: 자막 우선 처리 및 VTT 파싱 로직 강화 (Broken VTT 대응)
 """
 
 import logging
 import gc
 import torch
 import time
+import re
+import subprocess
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
-import subprocess
 
 # 로컬 모듈
 from download import YouTubeDownloader
@@ -95,48 +97,69 @@ class TrackSeparationWorkflow:
             tracks = processor.get_separated_tracks(str(separation_dir))
             if not tracks: raise Exception("분리된 트랙 없음")
             
-            # [Fix] Whisper 정렬을 위해 실제 파일 절대 경로 미리 저장 (URL 덮어쓰기 전)
+            # Whisper 정렬을 위해 실제 파일 절대 경로 미리 저장
             vocal_absolute_path = None
             if 'vocal' in tracks:
                 vocal_absolute_path = tracks['vocal']['path']
 
-            # [Fix] 클라이언트용 URL 생성 (라우터 규칙에 맞게 /separated 제거)
-            # routes.py의 rglob이 하위 폴더를 검색하므로 단순 경로가 안전함
+            # 클라이언트용 URL 생성
             for t, info in tracks.items():
                 info['path'] = f"/downloads/{video_id}/{t}.wav"
             result['tracks'] = tracks
 
+            # ====================================================
+            # [수정된 로직] 텍스트 리소스 확보 전략
+            # Priority 1: 자막 (Subtitles) - 항상 최우선 시도
+            # Priority 2: 가사 크롤링 (Official인 경우만)
+            # ====================================================
             lyrics_text = None
-            if progress_callback: progress_callback(70, '가사/자막 확보 중...')
-
-            # 3-A. 공식 음원 (크롤링)
-            if meta.get('sourceType') == 'official' and meta.get('title'):
-                try:
-                    res = self.lyrics_crawler.fetch_lyrics(meta['title'], meta['artist'], meta['album'])
-                    if res: lyrics_text = res['lyrics']
-                except Exception: pass
             
-            # 3-B. 일반 영상 또는 크롤링 실패 (자막 다운로드)
-            if not lyrics_text:
-                try:
-                    sub_file = self._download_subtitles(video_id, work_dir)
-                    if sub_file: lyrics_text = self._parse_subtitles(sub_file)
-                except Exception: pass
+            if progress_callback: progress_callback(70, '자막/가사 검색 중...')
 
-            # [4단계] Whisper 정렬 (가사 존재 시)
+            # 3-A. 자막 다운로드 시도 (최우선)
+            try:
+                sub_file = self._download_subtitles(video_id, work_dir)
+                if sub_file:
+                    logger.info(f"[Text] 자막 파일 발견: {sub_file}")
+                    lyrics_text = self._parse_subtitles(sub_file)
+                    if lyrics_text:
+                        logger.info("[Text] 자막 파싱 및 정제 성공")
+            except Exception as e:
+                logger.warning(f"[Text] 자막 처리 중 오류: {e}")
+
+            # 3-B. 자막이 없고 & 공식 음원인 경우 -> 크롤링 시도
+            if not lyrics_text and meta.get('sourceType') == 'official' and meta.get('title'):
+                if progress_callback: progress_callback(75, '공식 가사 검색 중...')
+                try:
+                    logger.info(f"[Text] 공식 음원 가사 크롤링 시도: {meta['title']}")
+                    res = self.lyrics_crawler.fetch_lyrics(meta['title'], meta['artist'], meta['album'])
+                    if res: 
+                        lyrics_text = res['lyrics']
+                        logger.info("[Text] 가사 크롤링 성공")
+                except Exception as e:
+                    logger.warning(f"[Text] 크롤링 오류: {e}")
+
+            # [4단계] Whisper 정렬 (텍스트 존재 시)
             if lyrics_text and len(lyrics_text) > 10:
                 if progress_callback: progress_callback(85, 'AI 싱크 정렬 중...')
                 try:
-                    # [Fix] 역산한 경로 대신 저장해둔 절대 경로 사용
                     if vocal_absolute_path:
-                        lrc = align_lyrics(vocal_absolute_path, lyrics_text, device='cuda' if torch.cuda.is_available() else 'cpu')
+                        # 정렬 수행
+                        lrc = align_lyrics(
+                            vocal_absolute_path, 
+                            lyrics_text, 
+                            device='cuda' if torch.cuda.is_available() else 'cpu'
+                        )
                         if lrc:
                             result['lyrics_lrc'] = lrc
                             (work_dir / 'aligned.lrc').write_text(lrc, encoding='utf-8')
+                            logger.info("[Align] 정렬 완료 및 저장됨")
                     else:
-                        logger.warning("정렬 실패: 보컬 트랙 경로를 찾을 수 없음")
+                        logger.warning("[Align] 정렬 실패: 보컬 트랙 경로 없음")
                 except Exception as e:
-                    logger.error(f"정렬 실패: {e}")
+                    logger.error(f"[Align] 정렬 실패: {e}")
+            else:
+                logger.info("[Workflow] 텍스트 리소스 없음 - 오디오만 반환")
             
             result['success'] = True
             if progress_callback: progress_callback(100, '완료!')
@@ -144,6 +167,8 @@ class TrackSeparationWorkflow:
 
         except Exception as e:
             logger.error(f"Workflow Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             result['error'] = str(e)
             if progress_callback: progress_callback(0, f"Error: {e}")
             return result
@@ -167,7 +192,6 @@ class TrackSeparationWorkflow:
             return None
             
         for t, info in tracks.items():
-            # [Fix] 캐시 URL도 동일하게 수정
             info['path'] = f"/downloads/{video_id}/{t}.wav"
             
         lrc = None
@@ -184,38 +208,106 @@ class TrackSeparationWorkflow:
         }
 
     def _download_subtitles(self, video_id: str, output_dir: Path) -> Optional[str]:
-        """yt-dlp로 자막 다운로드"""
+        """yt-dlp로 자막 다운로드 (수동 자막 우선, 자동 자막 차선)"""
         url = f"https://www.youtube.com/watch?v={video_id}"
-        cmd = [
+        
+        # 1차 시도: 수동 자막 (Clean Subs)
+        cmd_manual = [
             'yt-dlp',
-            '--write-auto-sub',
             '--write-sub',
             '--sub-lang', 'ko,en',
             '--skip-download',
-            '-o', str(output_dir / '%(title)s'),
+            '-o', str(output_dir / '%(title)s.manual'),
             url
         ]
-        try:
-            subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            vtt_files = list(output_dir.glob('*.vtt'))
-            if not vtt_files: return None
+        
+        # 2차 시도: 자동 자막 (Auto Subs)
+        cmd_auto = [
+            'yt-dlp',
+            '--write-auto-sub',
+            '--sub-lang', 'ko,en',
+            '--skip-download',
+            '-o', str(output_dir / '%(title)s.auto'),
+            url
+        ]
 
-            selected_file = None
-            for f in vtt_files: # 한국어 우선
-                if '.ko' in f.name.lower(): 
-                    selected_file = f
-                    break
-            if not selected_file: selected_file = vtt_files[0]
-            return str(selected_file)
+        def run_and_find(cmd, suffix_pattern):
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                # 파일 검색
+                candidates = list(output_dir.glob(f'*.{suffix_pattern}.*.vtt'))
+                if not candidates: return None
+                
+                # 한국어 우선 선택
+                for f in candidates:
+                    if '.ko.' in f.name.lower(): return f
+                return candidates[0]
+            except Exception:
+                return None
 
-        except Exception as e:
-            logger.warning(f"[자막] 다운로드 오류: {e}")
-            return None
+        # 수동 자막 시도
+        found = run_and_find(cmd_manual, 'manual')
+        if found: return str(found)
+        
+        # 자동 자막 시도
+        found = run_and_find(cmd_auto, 'auto')
+        if found: return str(found)
+        
+        return None
 
     def _parse_subtitles(self, path):
-        """VTT -> Text 파싱"""
+        """
+        VTT 파일 파싱 및 정제 (Broken VTT, 태그, 중복 라인 제거)
+        """
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                lines = [l.strip() for l in f if l.strip() and '-->' not in l and not l.strip().isdigit() and l.strip() != 'WEBVTT']
-            return ' '.join(list(dict.fromkeys(lines)))
-        except: return None
+                content = f.read()
+
+            lines = content.split('\n')
+            cleaned_lines = []
+            prev_line = ""
+
+            # 정규표현식 컴파일
+            # 1. 태그 제거: <c>, <00:00:00> 등
+            tag_pattern = re.compile(r'<[^>]+>')
+            # 2. 메타데이터 제거: align:start position:0% 등
+            meta_pattern = re.compile(r'\s+align:\S+|position:\S+|line:\S+')
+            # 3. 타임스탬프 라인 식별
+            time_pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3}\s-->\s\d{2}:\d{2}:\d{2}\.\d{3}')
+
+            for line in lines:
+                line = line.strip()
+                
+                # 건너뛰기 조건
+                if not line: continue
+                if line == 'WEBVTT': continue
+                if line.startswith('Kind:'): continue
+                if line.startswith('Language:'): continue
+                if time_pattern.match(line): continue
+                
+                # 태그 및 메타데이터 정제
+                # 예: "안녕하세요.<00:11><c> 반가워요</c>" -> "안녕하세요. 반가워요"
+                line = tag_pattern.sub('', line)
+                line = meta_pattern.sub('', line)
+                line = line.strip()
+                
+                if not line: continue
+
+                # 중복 제거 (바로 윗줄과 같다면 스킵 - 자동자막의 누적 문제 해결)
+                # strip() 된 상태에서 비교하므로 공백 차이로 인한 중복도 방지
+                if line != prev_line:
+                    cleaned_lines.append(line)
+                    prev_line = line
+
+            # 결과 합치기
+            full_text = ' '.join(cleaned_lines)
+            
+            # 너무 짧으면 유효하지 않음
+            if len(full_text) < 10:
+                return None
+                
+            return full_text
+
+        except Exception as e:
+            logger.error(f"[_parse_subtitles] 파싱 오류: {e}")
+            return None
