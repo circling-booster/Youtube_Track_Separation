@@ -1,45 +1,46 @@
+
 /**
- * Track Player Engine V3.2.1 (Dual Engine / Fixed)
- * - Error Fix: attachListeners 함수 복구
- * - 드럼 싱크 슬라이더 제거 (더미 프로세서로 자동 동기화)
- * - 드럼 트랙: Pitch 1.0 Rubberband 통과 (Latency Match)
+ * Track Player Engine V3.3 (High Quality & Formant Preservation)
+ * - 피치 변경 시 포먼트 보존 (Chipmunk 효과 방지)
+ * - 고품질 모드 활성화
+ * - 드럼 트랙 지연 보정 (Dummy Processor)
  */
-(function(root) {
+(function (root) {
     class AudioPlayer {
         constructor(tracks, onTimeUpdate) {
             this.tracks = tracks;
-            this.onTimeUpdate = onTimeUpdate || (() => {});
-            
+            this.onTimeUpdate = onTimeUpdate || (() => { });
+
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             this.audioContext = new AudioContext({ latencyHint: 'playback' });
-            
+
             this.volumes = { vocal: 35, bass: 100, drum: 100, other: 100 };
-            
+
             this.resources = {};
             this.activeSourceNodes = [];
-            
-            this.mode = 'buffer'; 
+
+            this.mode = 'buffer';
             this._cachedVideo = null;
             this.rafId = null;
             this.container = null;
             this.minimizedIcon = null;
 
-            this.isDragging = false; 
+            this.isDragging = false;
 
-            // --- Pitch & Sync Core (Dual Engine) ---
-            this.pitch = 1.0; 
-            this.currentSemitones = 0; 
-            
-            // Engine 1: Main (Vocal, Bass, Other) - 피치 조절용
+            // --- Pitch & Sync Core ---
+            this.pitch = 1.0;
+            this.currentSemitones = 0;
+
+            // Engine 1: Main (Vocal, Bass, Other) - 피치/포먼트 조절용
             this.pitchNode = null;
-            this.pitchGroupInput = null; 
-            
+            this.pitchGroupInput = null;
+
             // Engine 2: Drum (Dummy) - 레이턴시 매칭용 (피치 1.0 고정)
             this.drumPitchNode = null;
             this.drumGroupInput = null;
 
             this.isRubberbandReady = false;
-            this.isSyncing = false; 
+            this.isSyncing = false;
 
             this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
             this.updateLoop = this.updateLoop.bind(this);
@@ -51,7 +52,7 @@
             const v = document.querySelector('video.html5-main-video') || document.querySelector('video');
             if (v) {
                 this._cachedVideo = v;
-                this.attachListeners(v); // 이곳에서 호출됨
+                this.attachListeners(v);
                 this.hijackAudio(v);
             }
             return v;
@@ -69,28 +70,39 @@
             try {
                 const workletUrl = chrome.runtime.getURL('rubberband-processor.js');
                 await this.audioContext.audioWorklet.addModule(workletUrl);
-                
-                // 1. 메인 엔진 (피치 조절용)
-                this.pitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor');
+
+                // 1. 메인 엔진 (피치/포먼트 조절용)
+                this.pitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor', {
+                    processorOptions: {
+                        highQuality: true, // 고품질 모드 활성화
+                        channels: 2
+                    }
+                });
                 this.pitchNode.onprocessorerror = (err) => console.error('[Player] Main Worklet Error:', err);
-                
+
                 this.pitchGroupInput = this.audioContext.createGain();
                 this.pitchGroupInput.connect(this.pitchNode);
                 this.pitchNode.connect(this.audioContext.destination);
 
                 // 2. 드럼 엔진 (레이턴시 매칭용 더미)
-                this.drumPitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor');
+                this.drumPitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor', {
+                    processorOptions: {
+                        highQuality: true, // 레이턴시 매칭을 위해 동일 설정 사용
+                        channels: 2
+                    }
+                });
                 this.drumPitchNode.onprocessorerror = (err) => console.error('[Player] Drum Worklet Error:', err);
-                
+
                 this.drumGroupInput = this.audioContext.createGain();
                 this.drumGroupInput.connect(this.drumPitchNode);
                 this.drumPitchNode.connect(this.audioContext.destination);
 
-                // 드럼 엔진 초기화 (항상 1.0)
-                this.drumPitchNode.port.postMessage(JSON.stringify(["pitch", 1.0]));
+                // 드럼 엔진 초기화 (피치/포먼트 1.0 고정)
+                this.drumPitchNode.port.postMessage({ type: 'pitch', value: 1.0 });
+                this.drumPitchNode.port.postMessage({ type: 'formant', value: 1.0 });
 
                 this.isRubberbandReady = true;
-                console.log("[Player] Dual Engine Ready (Auto Sync)");
+                console.log("[Player] Dual Engine Ready (HQ & Formant Preserved)");
 
             } catch (e) {
                 console.warn('[Player] Rubberband failed:', e);
@@ -98,13 +110,13 @@
             }
         }
 
-        // --- Smart Sync Logic ---
+        // --- Smart Sync Logic (Formant Preservation Added) ---
         performSmartSync(semitones) {
             if (!this.isRubberbandReady || this.isSyncing) return;
-            
+
             this.isSyncing = true;
             this.currentSemitones = semitones;
-            
+
             this.updateStatusText(`Key Changing... ${semitones > 0 ? '+' : ''}${semitones}`);
             this.setGlobalVolume(0, 0.1); // Fade Out
 
@@ -112,11 +124,19 @@
                 const ratio = Math.pow(2, semitones / 12.0);
                 this.pitch = ratio;
 
-                // 메인 엔진: 피치 변경
-                try { this.pitchNode.port.postMessage(JSON.stringify(["pitch", ratio])); } catch (e) {}
-                
-                // 드럼 엔진: 1.0 유지 (안전장치)
-                try { this.drumPitchNode.port.postMessage(JSON.stringify(["pitch", 1.0])); } catch (e) {}
+                // [Formant Preservation Logic]
+                // 피치를 올리면(ratio > 1) 목소리가 얇아지므로, 포먼트 스케일을 낮춰(1/ratio) 보정
+                // 피치를 내리면(ratio < 1) 목소리가 굵어지므로, 포먼트 스케일을 높여(1/ratio) 보정
+                // 즉, Formant Scale = 1.0 / Pitch Ratio 로 설정하면 원래 목소리 톤을 유지함.
+                const formantScale = 1.0 / ratio;
+
+                // 메인 엔진: 피치 및 포먼트 변경
+                try {
+                    this.pitchNode.port.postMessage({ type: 'pitch', value: ratio });
+                    this.pitchNode.port.postMessage({ type: 'formant', value: formantScale });
+                } catch (e) { }
+
+                // 드럼 엔진: 변경 없음 (1.0 유지)
 
                 // 강제 Seek (버퍼 플러시 및 동기화)
                 if (this.videoElement) {
@@ -139,16 +159,14 @@
                 try {
                     node.gainNode.gain.cancelScheduledValues(now);
                     node.gainNode.gain.linearRampToValueAtTime(originalVol * targetGain, now + rampTime);
-                } catch(e) {}
+                } catch (e) { }
             });
         }
-        
+
         updateStatusText(text) {
             const statusEl = document.getElementById('cp-status');
             if (statusEl) statusEl.textContent = text;
         }
-
-        // --- General Player Logic ---
 
         attachFullscreenListener() {
             document.addEventListener('fullscreenchange', this.handleFullscreenChange);
@@ -175,17 +193,17 @@
                     const blob = await res.blob();
                     const arrayBuffer = await blob.arrayBuffer();
                     const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-                    
+
                     const blobUrl = URL.createObjectURL(blob);
                     const audioEl = new Audio(blobUrl);
                     audioEl.preservesPitch = true;
                     audioEl.crossOrigin = "anonymous";
-                    
+
                     const elSource = this.audioContext.createMediaElementSource(audioEl);
                     const elGain = this.audioContext.createGain();
                     elSource.connect(elGain);
                     elGain.connect(this.audioContext.destination);
-                    elGain.gain.value = 0; 
+                    elGain.gain.value = 0;
 
                     this.resources[name] = {
                         buffer: audioBuffer,
@@ -198,7 +216,7 @@
 
             await Promise.all(promises);
             this.updateStatusText('Ready');
-            
+
             if (this.videoElement && !this.videoElement.paused) {
                 this.checkModeAndPlay(this.videoElement);
             }
@@ -209,10 +227,9 @@
             try {
                 const source = this.audioContext.createMediaElementSource(videoEl);
                 videoEl._isHijacked = true;
-            } catch (e) {}
+            } catch (e) { }
         }
 
-        // [Fixed] 누락되었던 함수 복구
         attachListeners(videoEl) {
             const events = ['play', 'pause', 'waiting', 'playing', 'seeked', 'ratechange'];
             events.forEach(evt => {
@@ -224,7 +241,7 @@
         handleVideoEvent(e) {
             const v = e.target;
             if (Object.keys(this.resources).length === 0 || this.audioContext.state === 'closed') return;
-            if (this.isSyncing) return; 
+            if (this.isSyncing) return;
 
             switch (e.type) {
                 case 'pause':
@@ -240,10 +257,10 @@
                     }
                     break;
                 case 'ratechange':
-                    this.checkModeAndPlay(v, true); 
+                    this.checkModeAndPlay(v, true);
                     break;
             }
-            
+
             const btn = document.getElementById('cp-play-btn');
             if (btn) btn.innerHTML = v.paused ? '▶' : '⏸';
         }
@@ -271,7 +288,7 @@
             Object.entries(this.resources).forEach(([name, res]) => {
                 const source = this.audioContext.createBufferSource();
                 source.buffer = res.buffer;
-                
+
                 const gainNode = this.audioContext.createGain();
                 gainNode.gain.value = this.volumes[name] / 100;
                 source.connect(gainNode);
@@ -286,10 +303,10 @@
                 } else {
                     gainNode.connect(this.audioContext.destination);
                 }
-                
+
                 source.start(0, startTime);
                 this.activeSourceNodes.push({ source, gainNode, name });
-                res.element.pause(); 
+                res.element.pause();
             });
         }
 
@@ -300,15 +317,15 @@
                 }
                 res.element.playbackRate = rate;
                 res.elementGain.gain.value = this.volumes[name] / 100;
-                
+
                 const p = res.element.play();
-                if (p !== undefined) p.catch(() => {});
+                if (p !== undefined) p.catch(() => { });
             });
         }
 
         stopAll() {
             this.activeSourceNodes.forEach(node => {
-                try { node.source.stop(); } catch(e) {}
+                try { node.source.stop(); } catch (e) { }
             });
             this.activeSourceNodes = [];
             Object.values(this.resources).forEach(res => res.element.pause());
@@ -331,11 +348,11 @@
                     const pct = (v.currentTime / total) * 100;
                     const prog = document.getElementById('cp-progress');
                     if (prog) prog.value = pct;
-                    
+
                     const currText = document.getElementById('cp-curr-time');
-                    if(currText) currText.textContent = this.formatTime(v.currentTime);
+                    if (currText) currText.textContent = this.formatTime(v.currentTime);
                     const totalText = document.getElementById('cp-total-time');
-                    if(totalText) totalText.textContent = this.formatTime(total);
+                    if (totalText) totalText.textContent = this.formatTime(total);
                 }
             }
             this.rafId = requestAnimationFrame(this.updateLoop);
@@ -343,7 +360,7 @@
 
         createUI() {
             if (!window.YTSepUITemplates?.customPlayerHTML) return;
-            
+
             if (!this.container) {
                 this.container = document.createElement('div');
                 this.container.id = 'yt-custom-player-ui';
@@ -355,27 +372,26 @@
 
             this.createMinimizedIcon();
 
-            // Event Bindings
             document.getElementById('cp-close-btn').onclick = () => this.destroy();
             document.getElementById('cp-minimize-btn').onclick = () => this.toggleMinimize(true);
             document.getElementById('cp-play-btn').onclick = () => {
                 const v = this.videoElement;
-                if(v) v.paused ? v.play() : v.pause();
+                if (v) v.paused ? v.play() : v.pause();
             };
 
             const settingsBtn = document.getElementById('cp-settings-toggle-btn');
             const settingsPanel = document.getElementById('cp-settings-panel');
             const settingsClose = document.getElementById('cp-settings-close');
 
-            if(settingsBtn && settingsPanel) {
+            if (settingsBtn && settingsPanel) {
                 settingsBtn.onclick = () => {
                     const isVisible = settingsPanel.style.display !== 'none';
                     settingsPanel.style.display = isVisible ? 'none' : 'flex';
                 };
-                if(settingsClose) settingsClose.onclick = () => settingsPanel.style.display = 'none';
+                if (settingsClose) settingsClose.onclick = () => settingsPanel.style.display = 'none';
             }
 
-            // Pitch Control
+            // Pitch Control (UI)
             const pitchSlider = document.getElementById('cp-pitch-slider');
             const pitchVal = document.getElementById('cp-pitch-val');
             const btnDown = document.getElementById('cp-pitch-down');
@@ -396,17 +412,17 @@
             }
 
             const opacitySlider = document.getElementById('cp-opacity-slider');
-            if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
-            
+            if (opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
+
             const progress = document.getElementById('cp-progress');
             progress.onmousedown = () => { this.isDragging = true; };
             progress.onmouseup = () => { this.isDragging = false; };
             progress.oninput = () => { this.isDragging = true; };
             progress.onchange = () => {
                 this.isDragging = false;
-                if(this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
+                if (this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
             };
-            
+
             const toggleBtn = document.getElementById('cp-toggle-ui-btn');
             if (toggleBtn) {
                 toggleBtn.onclick = () => {
@@ -421,7 +437,7 @@
                     const val = parseInt(e.target.value);
                     this.volumes[track] = val;
                     this.activeSourceNodes.forEach(s => {
-                        if(s.name === track) s.gainNode.gain.value = val / 100;
+                        if (s.name === track) s.gainNode.gain.value = val / 100;
                     });
                 };
             });
@@ -438,6 +454,7 @@
                 z-index: 2147483647; cursor: pointer;
                 display: none; align-items: center; justify-content: center;
                 font-size: 24px; color: white; border: 2px solid white;
+                transition: transform 0.2s;
             `;
             this.minimizedIcon.innerHTML = '🎹';
             this.minimizedIcon.onclick = () => this.toggleMinimize(false);

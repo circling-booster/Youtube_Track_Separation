@@ -1,5 +1,5 @@
 
-(() => {
+( () => {
     // [WASM Binary Part - Keep this var A unchanged]
     var A = {
         937: (A, I, g) => {
@@ -1796,8 +1796,8 @@
             }
                 .apply(I, [])) || (A.exports = C)
         }
-    }
-
+    }   
+    
     // 아래 코드는 var A 정의가 끝난 후 이어지는 부분입니다.
     // 기존 파일의 하단 로직을 아래 코드로 완전히 교체하세요.
 
@@ -1812,392 +1812,392 @@
             exports: {}
         };
         return A[C](B, B.exports, g),
-            B.loaded = !0,
-            B.exports
+        B.loaded = !0,
+        B.exports
     }
     g.nmd = A => (A.paths = [],
-        A.children || (A.children = []),
-        A),
-        (() => {
-            "use strict";
-
-            // [Safety Check] Prevent execution in main thread
-            if (typeof AudioWorkletProcessor === 'undefined') {
-                return;
-            }
-
-            var A = g(937);
-            function I(A, I) {
-                if (!(A instanceof I))
-                    throw new TypeError("Cannot call a class as a function")
-            }
-            function C(A, I) {
-                for (var g = 0; g < I.length; g++) {
-                    var C = I[g];
-                    C.enumerable = C.enumerable || !1,
-                        C.configurable = !0,
-                        "value" in C && (C.writable = !0),
-                        Object.defineProperty(A, C.key, C)
-                }
-            }
-            function Q(A, I, g) {
-                return I in A ? Object.defineProperty(A, I, {
-                    value: g,
-                    enumerable: !0,
-                    configurable: !0,
-                    writable: !0
-                }) : A[I] = g,
-                    A
-            }
-            var B = Float32Array.BYTES_PER_ELEMENT
-                , E = Uint16Array.BYTES_PER_ELEMENT;
-
-            // Internal Buffer Helper
-            const o = function () {
-                function A(g, C) {
-                    var o = arguments.length > 2 && void 0 !== arguments[2] ? arguments[2] : 1;
-                    I(this, A),
-                        Q(this, "ready", !1),
-                        Q(this, "module", void 0),
-                        Q(this, "length", void 0),
-                        Q(this, "channelCount", void 0),
-                        Q(this, "dataPtr", void 0),
-                        Q(this, "channelData", []),
-                        this.module = g,
-                        this.channelCount = o,
-                        this.length = C;
-                    var i = this.length * B
-                        , D = this.channelCount * i;
-                    this.dataPtr = this.module._malloc(D);
-                    for (var G = 0; G < this.channelCount; ++G) {
-                        var Y = this.dataPtr + G * i
-                            , R = Y + i;
-                        this.channelData[G] = this.module.HEAPF32.subarray(Y >> E, R >> E)
-                    }
-                    this.ready = !0
-                }
-                var g, o;
-                return g = A,
-                    (o = [{
-                        key: "close",
-                        value: function () {
-                            this.ready = !1,
-                                this.module._free(this.dataPtr)
-                        }
-                    }, {
-                        key: "getHeapAddress",
-                        value: function () {
-                            return this.dataPtr
-                        }
-                    }, {
-                        key: "getChannelCount",
-                        value: function () {
-                            return this.channelCount
-                        }
-                    }, {
-                        key: "getChannelArray",
-                        value: function (A) {
-                            if (A < 0 || A >= this.channelCount)
-                                throw new Error("Invalid channel index ".concat(A, ", please choose an index from 0 to ").concat(this.channelCount));
-                            return this.channelData[A]
-                        }
-                    }, {
-                        key: "getArray",
-                        value: function () {
-                            return this.channelData
-                        }
-                    }]) && C(g.prototype, o),
-                    Object.defineProperty(g, "prototype", {
-                        writable: !1
-                    }),
-                    A
-            }();
-
-            function i(A, I) {
-                for (var g = 0; g < I.length; g++) {
-                    var C = I[g];
-                    C.enumerable = C.enumerable || !1,
-                        C.configurable = !0,
-                        "value" in C && (C.writable = !0),
-                        Object.defineProperty(A, C.key, C)
-                }
-            }
-            function D(A, I, g) {
-                return I in A ? Object.defineProperty(A, I, {
-                    value: g,
-                    enumerable: !0,
-                    configurable: !0,
-                    writable: !0
-                }) : A[I] = g,
-                    A
-            }
-
-            // Rubberband Wrapper Class
-            var G = function () {
-                function I(A, g, C) {
-                    !function (A, I) {
-                        if (!(A instanceof I))
-                            throw new TypeError("Cannot call a class as a function")
-                    }(this, I),
-                        D(this, "kernel", void 0),
-                        D(this, "channelCount", void 0),
-                        D(this, "numSamples", void 0),
-                        D(this, "highQuality", void 0),
-                        D(this, "tempo", 1),
-                        D(this, "pitch", 1),
-                        D(this, "formant", 1),
-                        D(this, "transients", 0), // Default to 0 (Smooth/Mixed default)
-                        D(this, "inputArray", void 0),
-                        D(this, "outputArray", void 0),
-                        this.numSamples = (null == C ? void 0 : C.numSamples) || 128,
-                        this.channelCount = g,
-                        this.highQuality = (null == C ? void 0 : C.highQuality) || true,
-                        this.pitch = (null == C ? void 0 : C.pitch) || 1,
-                        this.tempo = (null == C ? void 0 : C.tempo) || 1,
-                        this.init(g)
-                }
-                var g, C;
-                return g = I,
-                    (C = [{
-                        key: "init",
-                        value: function (I) {
-                            var g = this;
-                            A().then((function (A) {
-                                g.kernel = new A.RealtimeRubberBand(sampleRate, I, g.highQuality);
-                                g.inputArray = new o(A, 128, I),
-                                    g.outputArray = new o(A, 128, I),
-                                    1 !== g.pitch && g.kernel.setPitch(g.pitch),
-                                    1 !== g.tempo && g.kernel.setTempo(g.tempo)
-
-                                if (g.kernel.setFormantScale) {
-                                    g.kernel.setFormantScale(g.formant || 1.0);
-                                }
-                                // Apply stored transient setting on init
-                                if (g.kernel.setTransientsOption) {
-                                    g.kernel.setTransientsOption(g.transients);
-                                }
-                            }))
-                        }
-                    }, {
-                        key: "setTempo",
-                        value: function (A) {
-                            this.tempo = A,
-                                this.kernel && this.kernel.setTempo(this.tempo)
-                        }
-                    }, {
-                        key: "setPitch",
-                        value: function (A) {
-                            this.pitch = A,
-                                this.kernel && this.kernel.setPitch(A)
-                        }
-                    }, {
-                        key: "setFormantScale",
-                        value: function (A) {
-                            this.formant = A;
-                            if (this.kernel && this.kernel.setFormantScale) {
-                                this.kernel.setFormantScale(A);
-                            }
-                        }
-                    }, {
-                        key: "setTransients",
-                        value: function (A) {
-                            this.transients = A;
-                            if (this.kernel && this.kernel.setTransientsOption) {
-                                this.kernel.setTransientsOption(A);
-                            }
-                        }
-                    }, {
-                        key: "samplesAvailable",
-                        get: function () {
-                            var A;
-                            return (null === (A = this.kernel) || void 0 === A ? void 0 : A.getSamplesAvailable()) || 0
-                        }
-                    }, {
-                        key: "push",
-                        value: function (A) {
-                            if (this.kernel && this.inputArray && A.length > 0) {
-                                for (var I = 0; I < A.length; ++I)
-                                    this.inputArray.getChannelArray(I).set(A[I]);
-                                this.kernel.push(this.inputArray.getHeapAddress(), this.numSamples)
-                            }
-                        }
-                    }, {
-                        key: "pull",
-                        value: function (A) {
-                            if (this.kernel && this.outputArray && A.length > 0 && this.kernel.getSamplesAvailable() >= this.numSamples) {
-                                this.kernel.pull(this.outputArray.getHeapAddress(), this.numSamples);
-                                for (var I = 0; I < A.length; ++I)
-                                    A[I].set(this.outputArray.getChannelArray(I))
-                            }
-                            return A
-                        }
-                    }, {
-                        key: "getVersion",
-                        value: function () {
-                            var A;
-                            return (null === (A = this.kernel) || void 0 === A ? void 0 : A.getVersion()) || 0
-                        }
-                    }, {
-                        key: "getChannelCount",
-                        value: function () {
-                            return this.channelCount
-                        }
-                    }, {
-                        key: "isHighQuality",
-                        value: function () {
-                            return this.highQuality
-                        }
-                    }]) && i(g.prototype, C),
-                    Object.defineProperty(g, "prototype", {
-                        writable: !1
-                    }),
-                    I
-            }();
-
-            // ... (Boilerplate helpers for inheritance: Y, R, y, N, F, h, c, w, a, J) ...
-            function Y(A) { return Y = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (A) { return typeof A } : function (A) { return A && "function" == typeof Symbol && A.constructor === Symbol && A !== Symbol.prototype ? "symbol" : typeof A }, Y(A) }
-            function R(A, I) { for (var g = 0; g < I.length; g++) { var C = I[g]; C.enumerable = C.enumerable || !1, C.configurable = !0, "value" in C && (C.writable = !0), Object.defineProperty(A, C.key, C) } }
-            function y(A, I) { if (I && ("object" === Y(I) || "function" == typeof I)) return I; if (void 0 !== I) throw new TypeError("Derived constructors may only return object or undefined"); return N(A) }
-            function N(A) { if (void 0 === A) throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); return A }
-            function F(A) { var I = "function" == typeof Map ? new Map : void 0; return F = function (A) { if (null === A || (g = A, -1 === Function.toString.call(g).indexOf("[native code]"))) return A; var g; if ("function" != typeof A) throw new TypeError("Super expression must either be null or a function"); if (void 0 !== I) { if (I.has(A)) return I.get(A); I.set(A, C) } function C() { return h(A, arguments, a(this).constructor) } return C.prototype = Object.create(A.prototype, { constructor: { value: C, enumerable: !1, writable: !0, configurable: !0 } }), w(C, A) }, F(A) }
-            function h(A, I, g) { return h = c() ? Reflect.construct.bind() : function (A, I, g) { var C = [null]; C.push.apply(C, I); var Q = new (Function.bind.apply(A, C)); return g && w(Q, g.prototype), Q }, h.apply(null, arguments) }
-            function c() { if ("undefined" == typeof Reflect || !Reflect.construct) return !1; if (Reflect.construct.sham) return !1; if ("function" == typeof Proxy) return !0; try { return Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], (function () { }))), !0 } catch (A) { return !1 } }
-            function w(A, I) { return w = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function (A, I) { return A.__proto__ = I, A }, w(A, I) }
-            function a(A) { return a = Object.setPrototypeOf ? Object.getPrototypeOf.bind() : function (A) { return A.__proto__ || Object.getPrototypeOf(A) }, a(A) }
-            function J(A, I, g) { return I in A ? Object.defineProperty(A, I, { value: g, enumerable: !0, configurable: !0, writable: !0 }) : A[I] = g, A }
-
-            // AudioWorkletProcessor Implementation
-            var s = function (A) {
-                !function (A, I) {
-                    if ("function" != typeof I && null !== I)
-                        throw new TypeError("Super expression must either be null or a function");
-                    A.prototype = Object.create(I && I.prototype, {
-                        constructor: {
-                            value: A,
-                            writable: !0,
-                            configurable: !0
-                        }
-                    }),
-                        Object.defineProperty(A, "prototype", {
-                            writable: !1
-                        }),
-                        I && w(A, I)
-                }(E, A);
-                var I, g, C, Q, B = (I = E,
-                    g = c(),
-                    function () {
-                        var A, C = a(I);
-                        if (g) {
-                            var Q = a(this).constructor;
-                            A = Reflect.construct(C, arguments, Q)
-                        } else
-                            A = C.apply(this, arguments);
-                        return y(this, A)
-                    }
-                );
-                function E(options) {
-                    var A;
-                    var opts = (options && options.processorOptions) ? options.processorOptions : {};
-
-                    return function (A, I) {
-                        if (!(A instanceof I))
-                            throw new TypeError("Cannot call a class as a function")
-                    }(this, E),
-                        J(N(A = B.call(this)), "api", void 0),
-                        J(N(A), "running", !0),
-                        J(N(A), "pitch", 1),
-                        J(N(A), "tempo", 1),
-                        J(N(A), "formant", 1),
-                        J(N(A), "transients", 0), // Default transients
-                        J(N(A), "highQuality", opts.highQuality !== undefined ? opts.highQuality : true),
-                        A.port.onmessage = function (I) {
-                            var data = I.data;
-                            if (typeof data === 'string') {
-                                try {
-                                    data = JSON.parse(data);
-                                } catch (e) {
-                                    return;
-                                }
-                            }
-
-                            var type = data.type;
-                            var value = data.value;
-
-                            switch (type) {
-                                case "pitch":
-                                    A.pitch = value;
-                                    A.api && A.api.setPitch(A.pitch);
-                                    break;
-                                case "formant":
-                                    A.formant = value;
-                                    A.api && A.api.setFormantScale(A.formant);
-                                    break;
-                                case "transients": // [Added] Handle transients message
-                                    A.transients = value;
-                                    A.api && A.api.setTransients(A.transients);
-                                    break;
-                                case "quality":
-                                    A.highQuality = value;
-                                    break;
-                                case "tempo":
-                                    A.tempo = value;
-                                    A.api && A.api.setTempo(A.tempo);
-                                    break;
-                                case "close":
-                                    A.close();
-                            }
-                        }
-                        ,
-                        A
-                }
-                return C = E,
-                    (Q = [{
-                        key: "getApi",
-                        value: function (A) {
-                            if (this.api && this.api.getChannelCount() === A && this.api.isHighQuality() === this.highQuality) {
-                                return this.api;
-                            }
-                            this.api = new G(sampleRate, A, {
-                                highQuality: this.highQuality,
-                                pitch: this.pitch,
-                                tempo: this.tempo
-                            });
-                            this.api.setTempo(this.tempo);
-                            this.api.setPitch(this.pitch);
-                            if (this.api.setFormantScale) this.api.setFormantScale(this.formant);
-                            if (this.api.setTransients) this.api.setTransients(this.transients);
-
-                            console.info("Rubberband engine version", this.api.getVersion());
-                            return this.api;
-                        }
-                    }, {
-                        key: "close",
-                        value: function () {
-                            this.port.onmessage = null,
-                                this.running = !1
-                        }
-                    }, {
-                        key: "process",
-                        value: function (A, I) {
-                            var g, C, Q = (null === (g = A[0]) || void 0 === g ? void 0 : g.length) || (null === (C = I[0]) || void 0 === C ? void 0 : C.length);
-                            if (Q > 0) {
-                                var B = this.getApi(Q);
-                                if ((null == A ? void 0 : A.length) > 0 && B.push(A[0]),
-                                    (null == I ? void 0 : I.length) > 0) {
-                                    var E = I[0][0].length;
-                                    B.samplesAvailable >= E && B.pull(I[0])
-                                }
-                            }
-                            return this.running
-                        }
-                    }]) && R(C.prototype, Q),
-                    Object.defineProperty(C, "prototype", {
-                        writable: !1
-                    }),
-                    E
-            }(F(AudioWorkletProcessor));
-            registerProcessor("rubberband-processor", s)
+    A.children || (A.children = []),
+    A),
+    ( () => {
+        "use strict";
+        
+        // [Safety Check] Prevent execution in main thread
+        if (typeof AudioWorkletProcessor === 'undefined') {
+            return;
         }
-        )()
+
+        var A = g(937);
+        function I(A, I) {
+            if (!(A instanceof I))
+                throw new TypeError("Cannot call a class as a function")
+        }
+        function C(A, I) {
+            for (var g = 0; g < I.length; g++) {
+                var C = I[g];
+                C.enumerable = C.enumerable || !1,
+                C.configurable = !0,
+                "value"in C && (C.writable = !0),
+                Object.defineProperty(A, C.key, C)
+            }
+        }
+        function Q(A, I, g) {
+            return I in A ? Object.defineProperty(A, I, {
+                value: g,
+                enumerable: !0,
+                configurable: !0,
+                writable: !0
+            }) : A[I] = g,
+            A
+        }
+        var B = Float32Array.BYTES_PER_ELEMENT
+          , E = Uint16Array.BYTES_PER_ELEMENT;
+        
+        // Internal Buffer Helper
+        const o = function() {
+            function A(g, C) {
+                var o = arguments.length > 2 && void 0 !== arguments[2] ? arguments[2] : 1;
+                I(this, A),
+                Q(this, "ready", !1),
+                Q(this, "module", void 0),
+                Q(this, "length", void 0),
+                Q(this, "channelCount", void 0),
+                Q(this, "dataPtr", void 0),
+                Q(this, "channelData", []),
+                this.module = g,
+                this.channelCount = o,
+                this.length = C;
+                var i = this.length * B
+                  , D = this.channelCount * i;
+                this.dataPtr = this.module._malloc(D);
+                for (var G = 0; G < this.channelCount; ++G) {
+                    var Y = this.dataPtr + G * i
+                      , R = Y + i;
+                    this.channelData[G] = this.module.HEAPF32.subarray(Y >> E, R >> E)
+                }
+                this.ready = !0
+            }
+            var g, o;
+            return g = A,
+            (o = [{
+                key: "close",
+                value: function() {
+                    this.ready = !1,
+                    this.module._free(this.dataPtr)
+                }
+            }, {
+                key: "getHeapAddress",
+                value: function() {
+                    return this.dataPtr
+                }
+            }, {
+                key: "getChannelCount",
+                value: function() {
+                    return this.channelCount
+                }
+            }, {
+                key: "getChannelArray",
+                value: function(A) {
+                    if (A < 0 || A >= this.channelCount)
+                        throw new Error("Invalid channel index ".concat(A, ", please choose an index from 0 to ").concat(this.channelCount));
+                    return this.channelData[A]
+                }
+            }, {
+                key: "getArray",
+                value: function() {
+                    return this.channelData
+                }
+            }]) && C(g.prototype, o),
+            Object.defineProperty(g, "prototype", {
+                writable: !1
+            }),
+            A
+        }();
+
+        function i(A, I) {
+            for (var g = 0; g < I.length; g++) {
+                var C = I[g];
+                C.enumerable = C.enumerable || !1,
+                C.configurable = !0,
+                "value"in C && (C.writable = !0),
+                Object.defineProperty(A, C.key, C)
+            }
+        }
+        function D(A, I, g) {
+            return I in A ? Object.defineProperty(A, I, {
+                value: g,
+                enumerable: !0,
+                configurable: !0,
+                writable: !0
+            }) : A[I] = g,
+            A
+        }
+
+        // Rubberband Wrapper Class
+        var G = function() {
+            function I(A, g, C) {
+                !function(A, I) {
+                    if (!(A instanceof I))
+                        throw new TypeError("Cannot call a class as a function")
+                }(this, I),
+                D(this, "kernel", void 0),
+                D(this, "channelCount", void 0),
+                D(this, "numSamples", void 0),
+                D(this, "highQuality", void 0),
+                D(this, "tempo", 1),
+                D(this, "pitch", 1),
+                D(this, "formant", 1), 
+                D(this, "transients", 0), // Default to 0 (Smooth/Mixed default)
+                D(this, "inputArray", void 0),
+                D(this, "outputArray", void 0),
+                this.numSamples = (null == C ? void 0 : C.numSamples) || 128,
+                this.channelCount = g,
+                this.highQuality = (null == C ? void 0 : C.highQuality) || true,
+                this.pitch = (null == C ? void 0 : C.pitch) || 1,
+                this.tempo = (null == C ? void 0 : C.tempo) || 1,
+                this.init(g)
+            }
+            var g, C;
+            return g = I,
+            (C = [{
+                key: "init",
+                value: function(I) {
+                    var g = this;
+                    A().then((function(A) {
+                        g.kernel = new A.RealtimeRubberBand(sampleRate, I, g.highQuality);
+                        g.inputArray = new o(A,128,I),
+                        g.outputArray = new o(A,128,I),
+                        1 !== g.pitch && g.kernel.setPitch(g.pitch),
+                        1 !== g.tempo && g.kernel.setTempo(g.tempo)
+                        
+                        if (g.kernel.setFormantScale) {
+                             g.kernel.setFormantScale(g.formant || 1.0);
+                        }
+                        // Apply stored transient setting on init
+                        if (g.kernel.setTransientsOption) {
+                            g.kernel.setTransientsOption(g.transients);
+                        }
+                    }))
+                }
+            }, {
+                key: "setTempo",
+                value: function(A) {
+                    this.tempo = A,
+                    this.kernel && this.kernel.setTempo(this.tempo)
+                }
+            }, {
+                key: "setPitch",
+                value: function(A) {
+                    this.pitch = A,
+                    this.kernel && this.kernel.setPitch(A)
+                }
+            }, {
+                key: "setFormantScale", 
+                value: function(A) {
+                    this.formant = A;
+                    if(this.kernel && this.kernel.setFormantScale) {
+                        this.kernel.setFormantScale(A);
+                    }
+                }
+            }, {
+                key: "setTransients",
+                value: function(A) {
+                    this.transients = A;
+                    if(this.kernel && this.kernel.setTransientsOption) {
+                        this.kernel.setTransientsOption(A);
+                    }
+                }
+            }, {
+                key: "samplesAvailable",
+                get: function() {
+                    var A;
+                    return (null === (A = this.kernel) || void 0 === A ? void 0 : A.getSamplesAvailable()) || 0
+                }
+            }, {
+                key: "push",
+                value: function(A) {
+                    if (this.kernel && this.inputArray && A.length > 0) {
+                        for (var I = 0; I < A.length; ++I)
+                            this.inputArray.getChannelArray(I).set(A[I]);
+                        this.kernel.push(this.inputArray.getHeapAddress(), this.numSamples)
+                    }
+                }
+            }, {
+                key: "pull",
+                value: function(A) {
+                    if (this.kernel && this.outputArray && A.length > 0 && this.kernel.getSamplesAvailable() >= this.numSamples) {
+                        this.kernel.pull(this.outputArray.getHeapAddress(), this.numSamples);
+                        for (var I = 0; I < A.length; ++I)
+                            A[I].set(this.outputArray.getChannelArray(I))
+                    }
+                    return A
+                }
+            }, {
+                key: "getVersion",
+                value: function() {
+                    var A;
+                    return (null === (A = this.kernel) || void 0 === A ? void 0 : A.getVersion()) || 0
+                }
+            }, {
+                key: "getChannelCount",
+                value: function() {
+                    return this.channelCount
+                }
+            }, {
+                key: "isHighQuality",
+                value: function() {
+                    return this.highQuality
+                }
+            }]) && i(g.prototype, C),
+            Object.defineProperty(g, "prototype", {
+                writable: !1
+            }),
+            I
+        }();
+        
+        // ... (Boilerplate helpers for inheritance: Y, R, y, N, F, h, c, w, a, J) ...
+        function Y(A){return Y="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(A){return typeof A}:function(A){return A&&"function"==typeof Symbol&&A.constructor===Symbol&&A!==Symbol.prototype?"symbol":typeof A},Y(A)}
+        function R(A,I){for(var g=0;g<I.length;g++){var C=I[g];C.enumerable=C.enumerable||!1,C.configurable=!0,"value"in C&&(C.writable=!0),Object.defineProperty(A,C.key,C)}}
+        function y(A,I){if(I&&("object"===Y(I)||"function"==typeof I))return I;if(void 0!==I)throw new TypeError("Derived constructors may only return object or undefined");return N(A)}
+        function N(A){if(void 0===A)throw new ReferenceError("this hasn't been initialised - super() hasn't been called");return A}
+        function F(A){var I="function"==typeof Map?new Map:void 0;return F=function(A){if(null===A||(g=A,-1===Function.toString.call(g).indexOf("[native code]")))return A;var g;if("function"!=typeof A)throw new TypeError("Super expression must either be null or a function");if(void 0!==I){if(I.has(A))return I.get(A);I.set(A,C)}function C(){return h(A,arguments,a(this).constructor)}return C.prototype=Object.create(A.prototype,{constructor:{value:C,enumerable:!1,writable:!0,configurable:!0}}),w(C,A)},F(A)}
+        function h(A,I,g){return h=c()?Reflect.construct.bind():function(A,I,g){var C=[null];C.push.apply(C,I);var Q=new(Function.bind.apply(A,C));return g&&w(Q,g.prototype),Q},h.apply(null,arguments)}
+        function c(){if("undefined"==typeof Reflect||!Reflect.construct)return!1;if(Reflect.construct.sham)return!1;if("function"==typeof Proxy)return!0;try{return Boolean.prototype.valueOf.call(Reflect.construct(Boolean,[],(function(){}))),!0}catch(A){return!1}}
+        function w(A,I){return w=Object.setPrototypeOf?Object.setPrototypeOf.bind():function(A,I){return A.__proto__=I,A},w(A,I)}
+        function a(A){return a=Object.setPrototypeOf?Object.getPrototypeOf.bind():function(A){return A.__proto__||Object.getPrototypeOf(A)},a(A)}
+        function J(A,I,g){return I in A?Object.defineProperty(A,I,{value:g,enumerable:!0,configurable:!0,writable:!0}):A[I]=g,A}
+
+        // AudioWorkletProcessor Implementation
+        var s = function(A) {
+            !function(A, I) {
+                if ("function" != typeof I && null !== I)
+                    throw new TypeError("Super expression must either be null or a function");
+                A.prototype = Object.create(I && I.prototype, {
+                    constructor: {
+                        value: A,
+                        writable: !0,
+                        configurable: !0
+                    }
+                }),
+                Object.defineProperty(A, "prototype", {
+                    writable: !1
+                }),
+                I && w(A, I)
+            }(E, A);
+            var I, g, C, Q, B = (I = E,
+            g = c(),
+            function() {
+                var A, C = a(I);
+                if (g) {
+                    var Q = a(this).constructor;
+                    A = Reflect.construct(C, arguments, Q)
+                } else
+                    A = C.apply(this, arguments);
+                return y(this, A)
+            }
+            );
+            function E(options) {
+                var A;
+                var opts = (options && options.processorOptions) ? options.processorOptions : {};
+                
+                return function(A, I) {
+                    if (!(A instanceof I))
+                        throw new TypeError("Cannot call a class as a function")
+                }(this, E),
+                J(N(A = B.call(this)), "api", void 0),
+                J(N(A), "running", !0),
+                J(N(A), "pitch", 1),
+                J(N(A), "tempo", 1),
+                J(N(A), "formant", 1),
+                J(N(A), "transients", 0), // Default transients
+                J(N(A), "highQuality", opts.highQuality !== undefined ? opts.highQuality : true),
+                A.port.onmessage = function(I) {
+                    var data = I.data;
+                    if (typeof data === 'string') {
+                        try {
+                            data = JSON.parse(data);
+                        } catch(e) {
+                            return;
+                        }
+                    }
+                    
+                    var type = data.type;
+                    var value = data.value;
+
+                    switch (type) {
+                    case "pitch":
+                        A.pitch = value;
+                        A.api && A.api.setPitch(A.pitch);
+                        break;
+                    case "formant": 
+                        A.formant = value;
+                        A.api && A.api.setFormantScale(A.formant);
+                        break;
+                    case "transients": // [Added] Handle transients message
+                        A.transients = value;
+                        A.api && A.api.setTransients(A.transients);
+                        break;
+                    case "quality":
+                        A.highQuality = value;
+                        break;
+                    case "tempo":
+                        A.tempo = value;
+                        A.api && A.api.setTempo(A.tempo);
+                        break;
+                    case "close":
+                        A.close();
+                    }
+                }
+                ,
+                A
+            }
+            return C = E,
+            (Q = [{
+                key: "getApi",
+                value: function(A) {
+                    if (this.api && this.api.getChannelCount() === A && this.api.isHighQuality() === this.highQuality) {
+                        return this.api;
+                    }
+                    this.api = new G(sampleRate, A, {
+                        highQuality: this.highQuality,
+                        pitch: this.pitch,
+                        tempo: this.tempo
+                    });
+                    this.api.setTempo(this.tempo);
+                    this.api.setPitch(this.pitch);
+                    if (this.api.setFormantScale) this.api.setFormantScale(this.formant);
+                    if (this.api.setTransients) this.api.setTransients(this.transients);
+                    
+                    console.info("Rubberband engine version", this.api.getVersion());
+                    return this.api;
+                }
+            }, {
+                key: "close",
+                value: function() {
+                    this.port.onmessage = null,
+                    this.running = !1
+                }
+            }, {
+                key: "process",
+                value: function(A, I) {
+                    var g, C, Q = (null === (g = A[0]) || void 0 === g ? void 0 : g.length) || (null === (C = I[0]) || void 0 === C ? void 0 : C.length);
+                    if (Q > 0) {
+                        var B = this.getApi(Q);
+                        if ((null == A ? void 0 : A.length) > 0 && B.push(A[0]),
+                        (null == I ? void 0 : I.length) > 0) {
+                            var E = I[0][0].length;
+                            B.samplesAvailable >= E && B.pull(I[0])
+                        }
+                    }
+                    return this.running
+                }
+            }]) && R(C.prototype, Q),
+            Object.defineProperty(C, "prototype", {
+                writable: !1
+            }),
+            E
+        }(F(AudioWorkletProcessor));
+        registerProcessor("rubberband-processor", s)
+    }
+    )()
 }
 )();
