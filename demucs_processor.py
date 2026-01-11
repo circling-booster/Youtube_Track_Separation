@@ -1,9 +1,11 @@
 """
 Demucs를 이용한 오디오 트랙 분리 (Stateless)
 - 모델 생명주기를 외부(workflow)에서 제어하도록 수정
+- [수정] 결과물을 WAV 대신 MP3로 저장 (용량 최적화)
 """
 
 import logging
+import subprocess
 from pathlib import Path
 import torch
 from demucs import pretrained
@@ -37,7 +39,7 @@ class DemucsProcessor:
         progress_callback=None
     ) -> bool:
         """
-        외부에서 주입된 모델 객체를 사용하여 분리 수행
+        외부에서 주입된 모델 객체를 사용하여 분리 수행 후 MP3 변환
         """
         try:
             input_file = Path(input_file)
@@ -56,8 +58,8 @@ class DemucsProcessor:
             sources = apply_model(model, wav[None], device=self.device, shifts=1, split=True, overlap=0.25, progress=True)[0]
             sources = sources * ref.std() + ref.mean()
 
-            # 저장
-            if progress_callback: progress_callback(60, '트랙 저장 중...')
+            # 저장 및 MP3 변환
+            if progress_callback: progress_callback(60, '트랙 저장 및 MP3 변환 중...')
             
             kwargs = {
                 'samplerate': model.samplerate,
@@ -69,10 +71,37 @@ class DemucsProcessor:
             
             track_names = model.sources
             for source, name in zip(sources, track_names):
-                stem = output_dir / f"{name}.wav"
-                save_audio(source.cpu(), str(stem), **kwargs)
+                wav_stem = output_dir / f"{name}.wav"
+                mp3_stem = output_dir / f"{name}.mp3"
+                
+                # 1. 임시 WAV 저장
+                save_audio(source.cpu(), str(wav_stem), **kwargs)
+                
+                # 2. ffmpeg로 MP3 변환 (VBR 품질 설정)
+                try:
+                    cmd = [
+                        'ffmpeg', '-y', 
+                        '-i', str(wav_stem),
+                        '-codec:a', 'libmp3lame', 
+                        '-qscale:a', '2',  # VBR High Quality (~190kbps average)
+                        str(mp3_stem)
+                    ]
+                    subprocess.run(
+                        cmd, 
+                        check=True, 
+                        stdout=subprocess.DEVNULL, 
+                        stderr=subprocess.DEVNULL
+                    )
+                    
+                    # 3. 변환 성공 시 WAV 삭제
+                    if mp3_stem.exists() and mp3_stem.stat().st_size > 0:
+                        wav_stem.unlink()
+                        
+                except Exception as conv_e:
+                    logger.error(f"[Demucs] MP3 변환 실패 ({name}): {conv_e}")
+                    # 변환 실패 시 WAV 유지 (Fallback 없음, 클라이언트는 MP3를 기대하므로 에러로 이어질 수 있음)
 
-            logger.info("[Demucs] 분리 완료")
+            logger.info("[Demucs] 분리 및 변환 완료")
             return True
 
         except Exception as e:
@@ -82,23 +111,24 @@ class DemucsProcessor:
             return False
 
     def get_separated_tracks(self, output_dir_str: str) -> dict:
-        """분리된 트랙 파일 확인"""
+        """분리된 트랙 파일 확인 (MP3 기준)"""
         output_dir = Path(output_dir_str)
         results = {}
         
+        # 파일명 매핑 (mp3로 변경)
         track_mapping = {
-            'vocals.wav': 'vocal',
-            'bass.wav': 'bass',
-            'drums.wav': 'drum',
-            'other.wav': 'other'
+            'vocals.mp3': 'vocal',
+            'bass.mp3': 'bass',
+            'drums.mp3': 'drum',
+            'other.mp3': 'other'
         }
 
-        for wav_name, track_name in track_mapping.items():
-            wav_path = output_dir / wav_name
-            if wav_path.exists():
+        for mp3_name, track_name in track_mapping.items():
+            file_path = output_dir / mp3_name
+            if file_path.exists():
                 results[track_name] = {
-                    'path': str(wav_path),
-                    'size': wav_path.stat().st_size / (1024 * 1024)
+                    'path': str(file_path),
+                    'size': file_path.stat().st_size / (1024 * 1024)
                 }
 
         return results

@@ -1,6 +1,7 @@
 """
 통합 파이프라인: 다운로드 → 분리 → 정렬 → 응답
 VRAM 메모리 안전성 보장 & 스마트 캐싱 & 로직 통합
+[수정] 30MB 용량 제한 및 MP3 변환 적용
 """
 
 import logging
@@ -26,6 +27,7 @@ class TrackSeparationWorkflow:
         self.downloader = YouTubeDownloader(str(download_dir))
         self.lyrics_crawler = BugsLyricsCrawler()
         self.text_cleaner = TextCleaner()
+        self.MAX_FILE_SIZE_MB = 30  # 최대 파일 크기 제한 (MB)
 
     def process_video(
         self,
@@ -65,8 +67,22 @@ class TrackSeparationWorkflow:
             audio_file = self.downloader.download(video_id, output_dir=work_dir)
             if not audio_file: raise Exception("오디오 다운로드 실패")
 
+            # [1-1단계] 파일 크기 검사 (30MB 제한)
+            file_size_mb = audio_file.stat().st_size / (1024 * 1024)
+            logger.info(f"[Workflow] 다운로드 파일 크기: {file_size_mb:.2f} MB")
+            
+            if file_size_mb > self.MAX_FILE_SIZE_MB:
+                # 파일 삭제 후 에러 처리
+                try:
+                    audio_file.unlink()
+                except:
+                    pass
+                error_msg = f"파일 크기가 너무 큽니다 ({file_size_mb:.1f}MB). 30MB 이하의 영상만 처리가 가능합니다."
+                logger.warning(f"[Workflow] {error_msg}")
+                raise Exception(error_msg)
+
             # [2단계] Demucs 분리 (VRAM 관리 핵심)
-            if progress_callback: progress_callback(20, 'AI 오디오 분리 중 (GPU)...')
+            if progress_callback: progress_callback(20, 'AI 오디오 분리 및 MP3 변환 중 (GPU)...')
             
             processor = DemucsProcessor(str(self.download_dir))
             separation_dir = work_dir / 'separated'
@@ -74,7 +90,7 @@ class TrackSeparationWorkflow:
             # 2-1. 모델 로드 (여기서만 존재)
             demucs_model = processor.load_model(model)
             
-            # 2-2. 분리 수행
+            # 2-2. 분리 수행 (MP3 저장 포함)
             success = processor.process_with_model(
                 demucs_model, 
                 audio_file, 
@@ -89,17 +105,18 @@ class TrackSeparationWorkflow:
             torch.cuda.empty_cache()
             time.sleep(2) # 메모리 해제 안정화 대기
 
-            if not success: raise Exception("Demucs 분리 실패")
+            if not success: raise Exception("Demucs 분리 및 변환 실패")
 
-            # [3단계] 트랙 정보 수집
+            # [3단계] 트랙 정보 수집 (MP3 기준)
             tracks = processor.get_separated_tracks(str(separation_dir))
             if not tracks: raise Exception("분리된 트랙 없음")
             
+            # Whisper 정렬을 위해 Vocal 트랙의 절대 경로 확보
             vocal_absolute_path = tracks.get('vocal', {}).get('path')
             
-            # 클라이언트용 경로 매핑
+            # 클라이언트용 경로 매핑 (.mp3)
             for t, info in tracks.items():
-                info['path'] = f"/downloads/{video_id}/{t}.wav"
+                info['path'] = f"/downloads/{video_id}/{t}.mp3"
             result['tracks'] = tracks
 
             # [4단계] 텍스트 리소스 확보 (SourceType 기반 분기)
@@ -183,8 +200,9 @@ class TrackSeparationWorkflow:
         if not all(k in tracks for k in required):
             return None
             
+        # 캐시된 파일도 MP3 경로로 매핑
         for t, info in tracks.items():
-            info['path'] = f"/downloads/{video_id}/{t}.wav"
+            info['path'] = f"/downloads/{video_id}/{t}.mp3"
             
         lrc = None
         lrc_path = work_dir / 'aligned.lrc'

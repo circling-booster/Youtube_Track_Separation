@@ -30,15 +30,17 @@ def get_video_info(video_id):
     
     # 기존 로직: 분리된 트랙이 있는지 확인
     tracks = {}
-    if output_dir.exists():
-        # processor의 메서드 활용
-        tracks_info = processor.get_separated_tracks(str(output_dir))
+    separation_dir = output_dir / 'separated'
+    
+    if separation_dir.exists():
+        # processor의 메서드 활용 (MP3 기준 확인)
+        tracks_info = processor.get_separated_tracks(str(separation_dir))
         # 웹 서빙용 경로로 변환
         for track_name, info in tracks_info.items():
             # info['path']는 절대 경로이므로 URL 경로로 변환 필요
-            # 기존 workflow.py 로직 참조: /downloads/video_id/name.wav
+            # 확장자를 .mp3로 통일
             tracks[track_name] = {
-                'path': f"/downloads/{video_id}/{track_name}.wav",
+                'path': f"/downloads/{video_id}/{track_name}.mp3",
                 'size': info['size']
             }
 
@@ -50,19 +52,22 @@ def get_video_info(video_id):
 
 @bp.route('/downloads/<video_id>/<filename>', methods=['GET'])
 def download_track(video_id, filename):
-    output_dir = DOWNLOADS_DIR / video_id
-    # 기존과 동일하게 파일 서빙
-    # (파일명 매핑 로직 유지)
-    track_mapping = {
-        'vocal.wav': 'vocals.wav',
-        'bass.wav': 'bass.wav',
-        'drum.wav': 'drums.wav',
-        'other.wav': 'other.wav'
-    }
-    actual_filename = track_mapping.get(filename, filename)
+    output_dir = DOWNLOADS_DIR / video_id / 'separated'
     
-    for file_path in output_dir.rglob(actual_filename):
-        if file_path.is_file():
-            return send_file(file_path, mimetype='audio/wav')
+    # 트랙 이름 매핑 (URL filename -> 실제 파일명)
+    # 클라이언트가 'vocal.mp3' 또는 'vocals.mp3'를 요청할 수 있음
+    track_mapping = {
+        'vocal.mp3': 'vocals.mp3',
+        'bass.mp3': 'bass.mp3',
+        'drum.mp3': 'drums.mp3',
+        'other.mp3': 'other.mp3'
+    }
+    
+    actual_filename = track_mapping.get(filename, filename)
+    file_path = output_dir / actual_filename
+    
+    if file_path.exists() and file_path.is_file():
+        # MP3 MIME Type 설정
+        return send_file(file_path, mimetype='audio/mpeg')
             
     return jsonify({'error': 'File not found'}), 404
