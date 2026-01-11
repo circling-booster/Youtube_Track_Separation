@@ -35,16 +35,11 @@
   }
 
   function customPlayerHTML(tracks) {
+    // [Modified] 드럼 싱크 설정 섹션 삭제됨
     const settingsHTML = `
         <div id="cp-settings-panel" class="sep-lyrics-settings" style="display:none;">
             <div class="sep-ls-header"><span>⚙️ 오디오/자막 설정</span><button id="cp-settings-close" style="background:none; border:none; color:#aaa; cursor:pointer;">✕</button></div>
             
-            <div class="sep-ls-section" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #444;">
-                <div class="sep-ls-row"><label>🥁 드럼 싱크</label><span id="val-drum-sync" style="font-size:11px; color:#3ea6ff;">50ms</span></div>
-                <input type="range" id="ap-cfg-drum-sync" class="sep-ls-range" min="0" max="200" value="50" step="5" title="드럼이 빠를 때 지연 추가">
-                <div style="font-size:10px; color:#888; margin-top:2px;">* 피치 조절 시 엇박자 보정용</div>
-            </div>
-
             <div class="sep-ls-row"><label>자막 폰트</label><select id="ap-cfg-font" class="sep-ls-select"><option value="'Pretendard', sans-serif">Pretendard</option><option value="'Nanum Gothic', sans-serif">나눔고딕</option></select></div>
             <div class="sep-ls-row"><label>자막 크기</label><input type="range" id="ap-cfg-size" class="sep-ls-range" min="20" max="150" value="80"></div>
             <div class="sep-ls-row"><label>자막 싱크</label><input type="number" id="ap-cfg-sync" class="sep-ls-input" value="-0.5" step="0.1"></div>
@@ -56,7 +51,6 @@
             position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
             width: 90%; max-width: 800px;
             background: rgba(15, 15, 15, 0.95); 
-            /* backdrop-filter removed */
             border: 1px solid #444; border-radius: 16px; padding: 20px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.6); z-index: 2147483647;
             display: flex; flex-direction: column; gap: 15px;
@@ -105,13 +99,12 @@
         .sep-ls-range { width: 120px; accent-color: #3ea6ff; }
         .sep-ls-select, .sep-ls-input { background: #444; border: none; color: white; padding: 2px 5px; border-radius: 3px; width: 100px; text-align: right; }
 
-        /* [Modified] Fullscreen Mode Style (No Blur) */
         #yt-custom-player-ui.fs-mode { 
             bottom: 0; left: 0; transform: none; 
             width: 100%; height: 100%; max-width: none; 
             background: transparent; border: none; padding: 40px; 
             pointer-events: none;
-            backdrop-filter: none !important; /* Force disable blur */
+            backdrop-filter: none !important;
         }
 
         #yt-custom-player-ui.fs-mode .sep-player-header { display: none; }
@@ -119,7 +112,7 @@
         #yt-custom-player-ui.fs-mode .sep-main-controls { 
             position: absolute; bottom: 10%; left: 50%; transform: translateX(-50%); 
             width: 60%; min-width: 600px; 
-            background: rgba(0,0,0,0.8); /* Dark background instead of blur */
+            background: rgba(0,0,0,0.8);
             pointer-events: auto; z-index: 100;
         }
 
@@ -130,7 +123,6 @@
             pointer-events: none;
         }
 
-        /* Absolute positioning for tracks in FS mode */
         #yt-custom-player-ui.fs-mode .sep-track-group { 
             position: absolute; width: 250px; 
             background: rgba(0,0,0,0.6); padding: 20px; border-radius: 16px; 
@@ -180,7 +172,7 @@
         </div>
 
         <button id="cp-toggle-ui-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:5px;" title="UI 숨기기">👁️</button>
-        <button id="cp-settings-toggle-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:5px;" title="설정 (드럼 싱크 등)">⚙️</button>
+        <button id="cp-settings-toggle-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:5px;" title="설정">⚙️</button>
         ${settingsHTML}
       </div>
 

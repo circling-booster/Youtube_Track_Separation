@@ -1,7 +1,8 @@
 /**
- * Hybrid Track Player Engine V2.5 (No Auto-Hide)
- * - Fixed: UI disappearing issue (Auto-hide removed)
- * - Fixed: Background blur issue logic handled in UI template
+ * Track Player Engine V3.2.1 (Dual Engine / Fixed)
+ * - Error Fix: attachListeners 함수 복구
+ * - 드럼 싱크 슬라이더 제거 (더미 프로세서로 자동 동기화)
+ * - 드럼 트랙: Pitch 1.0 Rubberband 통과 (Latency Match)
  */
 (function(root) {
     class AudioPlayer {
@@ -10,7 +11,7 @@
             this.onTimeUpdate = onTimeUpdate || (() => {});
             
             const AudioContext = window.AudioContext || window.webkitAudioContext;
-            this.audioContext = new AudioContext();
+            this.audioContext = new AudioContext({ latencyHint: 'playback' });
             
             this.volumes = { vocal: 35, bass: 100, drum: 100, other: 100 };
             
@@ -23,18 +24,22 @@
             this.container = null;
             this.minimizedIcon = null;
 
-            // [Modified] Auto-Hide 관련 변수 제거
             this.isDragging = false; 
 
-            // Pitch & Sync
+            // --- Pitch & Sync Core (Dual Engine) ---
             this.pitch = 1.0; 
             this.currentSemitones = 0; 
-            this.pitchNode = null;
-            this.pitchGroupInput = null;
-            this.drumDelayNode = null;
-            this.isRubberbandReady = false;
             
-            this.drumCorrectionMs = 50; 
+            // Engine 1: Main (Vocal, Bass, Other) - 피치 조절용
+            this.pitchNode = null;
+            this.pitchGroupInput = null; 
+            
+            // Engine 2: Drum (Dummy) - 레이턴시 매칭용 (피치 1.0 고정)
+            this.drumPitchNode = null;
+            this.drumGroupInput = null;
+
+            this.isRubberbandReady = false;
+            this.isSyncing = false; 
 
             this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
             this.updateLoop = this.updateLoop.bind(this);
@@ -46,7 +51,7 @@
             const v = document.querySelector('video.html5-main-video') || document.querySelector('video');
             if (v) {
                 this._cachedVideo = v;
-                this.attachListeners(v);
+                this.attachListeners(v); // 이곳에서 호출됨
                 this.hijackAudio(v);
             }
             return v;
@@ -54,7 +59,6 @@
 
         async init() {
             this.createUI();
-            // [Modified] setupAutoHide 호출 제거 (항상 표시)
             this.attachFullscreenListener();
             await this.initPitchShifter();
             await this.loadAllTracks();
@@ -66,19 +70,27 @@
                 const workletUrl = chrome.runtime.getURL('rubberband-processor.js');
                 await this.audioContext.audioWorklet.addModule(workletUrl);
                 
+                // 1. 메인 엔진 (피치 조절용)
                 this.pitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor');
-                this.pitchNode.onprocessorerror = (err) => console.error('[Player] Worklet Error:', err);
-
+                this.pitchNode.onprocessorerror = (err) => console.error('[Player] Main Worklet Error:', err);
+                
                 this.pitchGroupInput = this.audioContext.createGain();
                 this.pitchGroupInput.connect(this.pitchNode);
                 this.pitchNode.connect(this.audioContext.destination);
 
-                this.drumDelayNode = this.audioContext.createDelay(2.0); 
-                this.drumDelayNode.delayTime.value = 0; 
-                this.drumDelayNode.connect(this.audioContext.destination);
+                // 2. 드럼 엔진 (레이턴시 매칭용 더미)
+                this.drumPitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor');
+                this.drumPitchNode.onprocessorerror = (err) => console.error('[Player] Drum Worklet Error:', err);
+                
+                this.drumGroupInput = this.audioContext.createGain();
+                this.drumGroupInput.connect(this.drumPitchNode);
+                this.drumPitchNode.connect(this.audioContext.destination);
+
+                // 드럼 엔진 초기화 (항상 1.0)
+                this.drumPitchNode.port.postMessage(JSON.stringify(["pitch", 1.0]));
 
                 this.isRubberbandReady = true;
-                this.updatePitch(0);
+                console.log("[Player] Dual Engine Ready (Auto Sync)");
 
             } catch (e) {
                 console.warn('[Player] Rubberband failed:', e);
@@ -86,33 +98,57 @@
             }
         }
 
-        setDrumDelayCorrection(ms) {
-            this.drumCorrectionMs = ms;
-            this.applyDrumDelay();
-        }
-
-        applyDrumDelay() {
-            if (!this.drumDelayNode) return;
-            if (this.currentSemitones !== 0) {
-                this.drumDelayNode.delayTime.value = this.drumCorrectionMs / 1000.0;
-            } else {
-                this.drumDelayNode.delayTime.value = 0;
-            }
-        }
-
-        updatePitch(semitones) {
-            if (!this.isRubberbandReady || !this.pitchNode) return;
+        // --- Smart Sync Logic ---
+        performSmartSync(semitones) {
+            if (!this.isRubberbandReady || this.isSyncing) return;
             
+            this.isSyncing = true;
             this.currentSemitones = semitones;
-            const ratio = Math.pow(2, semitones / 12.0);
-            this.pitch = ratio;
+            
+            this.updateStatusText(`Key Changing... ${semitones > 0 ? '+' : ''}${semitones}`);
+            this.setGlobalVolume(0, 0.1); // Fade Out
 
-            const payload = ["pitch", ratio];
-            try { this.pitchNode.port.postMessage(JSON.stringify(payload)); } catch (e) {}
-            this.applyDrumDelay();
+            setTimeout(() => {
+                const ratio = Math.pow(2, semitones / 12.0);
+                this.pitch = ratio;
+
+                // 메인 엔진: 피치 변경
+                try { this.pitchNode.port.postMessage(JSON.stringify(["pitch", ratio])); } catch (e) {}
+                
+                // 드럼 엔진: 1.0 유지 (안전장치)
+                try { this.drumPitchNode.port.postMessage(JSON.stringify(["pitch", 1.0])); } catch (e) {}
+
+                // 강제 Seek (버퍼 플러시 및 동기화)
+                if (this.videoElement) {
+                    this.checkModeAndPlay(this.videoElement, true);
+                }
+
+                setTimeout(() => {
+                    this.setGlobalVolume(1, 0.2); // Fade In
+                    this.updateStatusText("Ready");
+                    this.isSyncing = false;
+                }, 150);
+
+            }, 50);
         }
 
-        // [Modified] resetAutoHide 함수 제거됨
+        setGlobalVolume(targetGain, rampTime) {
+            const now = this.audioContext.currentTime;
+            this.activeSourceNodes.forEach(node => {
+                const originalVol = this.volumes[node.name] / 100;
+                try {
+                    node.gainNode.gain.cancelScheduledValues(now);
+                    node.gainNode.gain.linearRampToValueAtTime(originalVol * targetGain, now + rampTime);
+                } catch(e) {}
+            });
+        }
+        
+        updateStatusText(text) {
+            const statusEl = document.getElementById('cp-status');
+            if (statusEl) statusEl.textContent = text;
+        }
+
+        // --- General Player Logic ---
 
         attachFullscreenListener() {
             document.addEventListener('fullscreenchange', this.handleFullscreenChange);
@@ -130,9 +166,7 @@
         }
 
         async loadAllTracks() {
-            const statusEl = document.getElementById('cp-status');
-            if (statusEl) statusEl.textContent = '트랙 로딩 중...';
-            
+            this.updateStatusText('트랙 로딩 중...');
             const promises = Object.entries(this.tracks).map(async ([name, info]) => {
                 try {
                     const res = await fetch(`http://localhost:5010${info.path}`, {
@@ -163,7 +197,7 @@
             });
 
             await Promise.all(promises);
-            if (statusEl) statusEl.textContent = 'Ready';
+            this.updateStatusText('Ready');
             
             if (this.videoElement && !this.videoElement.paused) {
                 this.checkModeAndPlay(this.videoElement);
@@ -178,6 +212,7 @@
             } catch (e) {}
         }
 
+        // [Fixed] 누락되었던 함수 복구
         attachListeners(videoEl) {
             const events = ['play', 'pause', 'waiting', 'playing', 'seeked', 'ratechange'];
             events.forEach(evt => {
@@ -189,6 +224,7 @@
         handleVideoEvent(e) {
             const v = e.target;
             if (Object.keys(this.resources).length === 0 || this.audioContext.state === 'closed') return;
+            if (this.isSyncing) return; 
 
             switch (e.type) {
                 case 'pause':
@@ -216,14 +252,12 @@
             const rate = v.playbackRate;
             const isNormalSpeed = (rate === 1.0);
             const newMode = isNormalSpeed ? 'buffer' : 'element';
-            
             const modeChanged = (this.mode !== newMode);
 
             if (forceRestart || modeChanged) {
                 this.stopAll();
                 this.mode = newMode;
             }
-
             if (this.mode === 'buffer') {
                 this.playBufferMode(v.currentTime);
             } else {
@@ -238,23 +272,23 @@
                 const source = this.audioContext.createBufferSource();
                 source.buffer = res.buffer;
                 
-                const gain = this.audioContext.createGain();
-                gain.gain.value = this.volumes[name] / 100;
-                
-                source.connect(gain);
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.value = this.volumes[name] / 100;
+                source.connect(gainNode);
 
+                // [Dual Engine Routing]
                 if (this.isRubberbandReady) {
                     if (name === 'drum') {
-                        gain.connect(this.drumDelayNode); 
+                        gainNode.connect(this.drumGroupInput); // 더미 프로세서
                     } else {
-                        gain.connect(this.pitchGroupInput);
+                        gainNode.connect(this.pitchGroupInput); // 메인 프로세서
                     }
                 } else {
-                    gain.connect(this.audioContext.destination);
+                    gainNode.connect(this.audioContext.destination);
                 }
                 
                 source.start(0, startTime);
-                this.activeSourceNodes.push({ source, gain, name });
+                this.activeSourceNodes.push({ source, gainNode, name });
                 res.element.pause(); 
             });
         }
@@ -300,6 +334,8 @@
                     
                     const currText = document.getElementById('cp-curr-time');
                     if(currText) currText.textContent = this.formatTime(v.currentTime);
+                    const totalText = document.getElementById('cp-total-time');
+                    if(totalText) totalText.textContent = this.formatTime(total);
                 }
             }
             this.rafId = requestAnimationFrame(this.updateLoop);
@@ -339,36 +375,24 @@
                 if(settingsClose) settingsClose.onclick = () => settingsPanel.style.display = 'none';
             }
 
-            // Pitch Button Logic
+            // Pitch Control
             const pitchSlider = document.getElementById('cp-pitch-slider');
             const pitchVal = document.getElementById('cp-pitch-val');
             const btnDown = document.getElementById('cp-pitch-down');
             const btnUp = document.getElementById('cp-pitch-up');
 
-            const setPitchUI = (val) => {
+            const updatePitchUI = (val) => {
                 if (val < -6) val = -6;
                 if (val > 6) val = 6;
                 pitchSlider.value = val;
                 pitchVal.textContent = val > 0 ? `+${val}` : val;
                 pitchVal.style.color = val === 0 ? '#fff' : '#3ea6ff';
-                this.updatePitch(val);
+                this.performSmartSync(val);
             };
 
             if (btnDown && btnUp) {
-                btnDown.onclick = (e) => { e.stopPropagation(); setPitchUI(parseInt(pitchSlider.value) - 1); };
-                btnUp.onclick = (e) => { e.stopPropagation(); setPitchUI(parseInt(pitchSlider.value) + 1); };
-            }
-
-            // Drum Sync Slider Logic
-            const drumSyncSlider = document.getElementById('ap-cfg-drum-sync');
-            const drumSyncVal = document.getElementById('val-drum-sync');
-            if (drumSyncSlider) {
-                drumSyncSlider.value = this.drumCorrectionMs;
-                drumSyncSlider.oninput = (e) => {
-                    const ms = parseInt(e.target.value);
-                    if(drumSyncVal) drumSyncVal.textContent = `${ms}ms`;
-                    this.setDrumDelayCorrection(ms);
-                };
+                btnDown.onclick = (e) => { e.stopPropagation(); updatePitchUI(parseInt(pitchSlider.value) - 1); };
+                btnUp.onclick = (e) => { e.stopPropagation(); updatePitchUI(parseInt(pitchSlider.value) + 1); };
             }
 
             const opacitySlider = document.getElementById('cp-opacity-slider');
@@ -441,6 +465,7 @@
             if (this.container) this.container.remove();
             if (this.minimizedIcon) this.minimizedIcon.remove();
             if (this.pitchNode) this.pitchNode.disconnect();
+            if (this.drumPitchNode) this.drumPitchNode.disconnect();
             this._cachedVideo = null;
         }
     }
