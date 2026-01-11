@@ -1,9 +1,8 @@
-
 /**
- * Track Player Engine V3.3 (High Quality & Formant Preservation)
- * - 피치 변경 시 포먼트 보존 (Chipmunk 효과 방지)
- * - 고품질 모드 활성화
- * - 드럼 트랙 지연 보정 (Dummy Processor)
+ * Track Player Engine V3.4 (3-Way Separation Logic)
+ * - Vocal: Pitch Shift + Formant Preservation (사람 목소리 보호)
+ * - Inst (Bass/Other): Pitch Shift Only (악기 질감 유지 - 업계 표준)
+ * - Drum: No Shift (Dummy Processor for Latency Sync)
  */
 (function (root) {
     class AudioPlayer {
@@ -31,13 +30,17 @@
             this.pitch = 1.0;
             this.currentSemitones = 0;
 
-            // Engine 1: Main (Vocal, Bass, Other) - 피치/포먼트 조절용
-            this.pitchNode = null;
-            this.pitchGroupInput = null;
+            // Engine 1: Vocal (피치 + 포먼트 보정)
+            this.vocalNode = null;
+            this.vocalInput = null;
 
-            // Engine 2: Drum (Dummy) - 레이턴시 매칭용 (피치 1.0 고정)
-            this.drumPitchNode = null;
-            this.drumGroupInput = null;
+            // Engine 2: Instrument (피치만 변경, 베이스/기타용)
+            this.instNode = null;
+            this.instInput = null;
+
+            // Engine 3: Drum (레이턴시 매칭용 더미)
+            this.drumNode = null;
+            this.drumInput = null;
 
             this.isRubberbandReady = false;
             this.isSyncing = false;
@@ -71,38 +74,42 @@
                 const workletUrl = chrome.runtime.getURL('rubberband-processor.js');
                 await this.audioContext.audioWorklet.addModule(workletUrl);
 
-                // 1. 메인 엔진 (피치/포먼트 조절용)
-                this.pitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor', {
-                    processorOptions: {
-                        highQuality: true, // 고품질 모드 활성화
-                        channels: 2
-                    }
-                });
-                this.pitchNode.onprocessorerror = (err) => console.error('[Player] Main Worklet Error:', err);
+                const createEngine = (name) => {
+                    const node = new AudioWorkletNode(this.audioContext, 'rubberband-processor', {
+                        processorOptions: {
+                            highQuality: true,
+                            channels: 2
+                        }
+                    });
+                    node.onprocessorerror = (err) => console.error(`[Player] ${name} Worklet Error:`, err);
+                    const input = this.audioContext.createGain();
+                    input.connect(node);
+                    node.connect(this.audioContext.destination);
+                    
+                    // 초기화 메시지 (피치 1.0, 포먼트 1.0)
+                    node.port.postMessage({ type: 'pitch', value: 1.0 });
+                    node.port.postMessage({ type: 'formant', value: 1.0 });
+                    
+                    return { node, input };
+                };
 
-                this.pitchGroupInput = this.audioContext.createGain();
-                this.pitchGroupInput.connect(this.pitchNode);
-                this.pitchNode.connect(this.audioContext.destination);
+                // 1. 보컬 엔진
+                const vocal = createEngine('Vocal');
+                this.vocalNode = vocal.node;
+                this.vocalInput = vocal.input;
 
-                // 2. 드럼 엔진 (레이턴시 매칭용 더미)
-                this.drumPitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor', {
-                    processorOptions: {
-                        highQuality: true, // 레이턴시 매칭을 위해 동일 설정 사용
-                        channels: 2
-                    }
-                });
-                this.drumPitchNode.onprocessorerror = (err) => console.error('[Player] Drum Worklet Error:', err);
+                // 2. 악기 엔진 (베이스, Other)
+                const inst = createEngine('Inst');
+                this.instNode = inst.node;
+                this.instInput = inst.input;
 
-                this.drumGroupInput = this.audioContext.createGain();
-                this.drumGroupInput.connect(this.drumPitchNode);
-                this.drumPitchNode.connect(this.audioContext.destination);
-
-                // 드럼 엔진 초기화 (피치/포먼트 1.0 고정)
-                this.drumPitchNode.port.postMessage({ type: 'pitch', value: 1.0 });
-                this.drumPitchNode.port.postMessage({ type: 'formant', value: 1.0 });
+                // 3. 드럼 엔진 (더미)
+                const drum = createEngine('Drum');
+                this.drumNode = drum.node;
+                this.drumInput = drum.input;
 
                 this.isRubberbandReady = true;
-                console.log("[Player] Dual Engine Ready (HQ & Formant Preserved)");
+                console.log("[Player] Triple Engine Ready (Vocal/Inst/Drum Separated)");
 
             } catch (e) {
                 console.warn('[Player] Rubberband failed:', e);
@@ -110,7 +117,7 @@
             }
         }
 
-        // --- Smart Sync Logic (Formant Preservation Added) ---
+        // --- Smart Sync Logic (Modified for 3-Way) ---
         performSmartSync(semitones) {
             if (!this.isRubberbandReady || this.isSyncing) return;
 
@@ -124,19 +131,22 @@
                 const ratio = Math.pow(2, semitones / 12.0);
                 this.pitch = ratio;
 
-                // [Formant Preservation Logic]
-                // 피치를 올리면(ratio > 1) 목소리가 얇아지므로, 포먼트 스케일을 낮춰(1/ratio) 보정
-                // 피치를 내리면(ratio < 1) 목소리가 굵어지므로, 포먼트 스케일을 높여(1/ratio) 보정
-                // 즉, Formant Scale = 1.0 / Pitch Ratio 로 설정하면 원래 목소리 톤을 유지함.
+                // 1. Vocal: 피치 변경 + 포먼트 보존 (목소리 변조 방지)
+                // Formant Scale = 1.0 / ratio
                 const formantScale = 1.0 / ratio;
-
-                // 메인 엔진: 피치 및 포먼트 변경
                 try {
-                    this.pitchNode.port.postMessage({ type: 'pitch', value: ratio });
-                    this.pitchNode.port.postMessage({ type: 'formant', value: formantScale });
+                    this.vocalNode.port.postMessage({ type: 'pitch', value: ratio });
+                    this.vocalNode.port.postMessage({ type: 'formant', value: formantScale });
                 } catch (e) { }
 
-                // 드럼 엔진: 변경 없음 (1.0 유지)
+                // 2. Inst: 피치 변경 + 포먼트 유지 (자연스러운 악기 소리)
+                // Formant Scale = 1.0 (그대로)
+                try {
+                    this.instNode.port.postMessage({ type: 'pitch', value: ratio });
+                    this.instNode.port.postMessage({ type: 'formant', value: 1.0 });
+                } catch (e) { }
+
+                // 3. Drum: 변경 없음 (피치 1.0, 포먼트 1.0) - 레이턴시만 맞춤
 
                 // 강제 Seek (버퍼 플러시 및 동기화)
                 if (this.videoElement) {
@@ -293,12 +303,17 @@
                 gainNode.gain.value = this.volumes[name] / 100;
                 source.connect(gainNode);
 
-                // [Dual Engine Routing]
+                // [3-Way Routing Logic]
                 if (this.isRubberbandReady) {
-                    if (name === 'drum') {
-                        gainNode.connect(this.drumGroupInput); // 더미 프로세서
+                    if (name === 'vocal') {
+                        // 1. 보컬 -> Vocal Engine (피치 + 포먼트)
+                        gainNode.connect(this.vocalInput);
+                    } else if (name === 'drum') {
+                        // 2. 드럼 -> Drum Engine (Bypass)
+                        gainNode.connect(this.drumInput);
                     } else {
-                        gainNode.connect(this.pitchGroupInput); // 메인 프로세서
+                        // 3. 베이스/기타 등 -> Inst Engine (피치만, 포먼트 X)
+                        gainNode.connect(this.instInput);
                     }
                 } else {
                     gainNode.connect(this.audioContext.destination);
@@ -481,8 +496,12 @@
             if (this.audioContext) this.audioContext.close();
             if (this.container) this.container.remove();
             if (this.minimizedIcon) this.minimizedIcon.remove();
-            if (this.pitchNode) this.pitchNode.disconnect();
-            if (this.drumPitchNode) this.drumPitchNode.disconnect();
+            
+            // 연결 해제
+            if (this.vocalNode) this.vocalNode.disconnect();
+            if (this.instNode) this.instNode.disconnect();
+            if (this.drumNode) this.drumNode.disconnect();
+            
             this._cachedVideo = null;
         }
     }
