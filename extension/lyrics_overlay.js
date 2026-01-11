@@ -2,29 +2,29 @@
  * Lyrics Overlay Engine V2
  * 기능: 가사 렌더링, 싱크 조절, 폰트/크기/확대비율 커스터마이징 UI 포함
  */
-(function(root) {
+(function (root) {
     class LyricsEngine {
         constructor() {
             this.lyrics = [];
             this.container = null;
             this.lyricsBox = null;
             this.domLines = [];
-            
+
             // 기본 설정 (localStorage 저장 기능 포함 예정)
             this.config = {
-                fontFamily: "'Pretendard', sans-serif",
-                fontSize: 34,      
-                activeScale: 1.2,      
-                syncOffset: 0.0,       
-                gapThreshold: 2.0,     
-                anticipation: 1.5      
+                fontFamily: "'Nanum Gothic', sans-serif",
+                fontSize: 80,
+                activeScale: 2.0,
+                syncOffset: -0.7,
+                gapThreshold: 2.0,
+                anticipation: 1.5
             };
 
             // 한국어 추천 폰트 10선 (Google Fonts + Pretendard)
             this.fontList = [
+                { name: 'Nanum Gothic (나눔고딕)', value: "'Nanum Gothic', sans-serif" },
                 { name: 'Pretendard (기본)', value: "'Pretendard', sans-serif" },
                 { name: 'Noto Sans KR (고딕)', value: "'Noto Sans KR', sans-serif" },
-                { name: 'Nanum Gothic (나눔고딕)', value: "'Nanum Gothic', sans-serif" },
                 { name: 'Nanum Myeongjo (나눔명조)', value: "'Nanum Myeongjo', serif" },
                 { name: 'Jua (주아)', value: "'Jua', sans-serif" },
                 { name: 'Do Hyeon (도현)', value: "'Do Hyeon', sans-serif" },
@@ -48,7 +48,7 @@
 
         loadWebFonts() {
             if (document.getElementById('ap-webfonts')) return;
-            
+
             // Google Fonts
             const link = document.createElement('link');
             link.id = 'ap-webfonts';
@@ -150,7 +150,7 @@
 
         createDOM() {
             this.container.innerHTML = '';
-            
+
             // 가사 박스
             this.lyricsBox = document.createElement('div');
             this.lyricsBox.className = 'ap-lyrics-box';
@@ -172,7 +172,7 @@
             // 2. 설정 패널
             const panel = document.createElement('div');
             panel.id = 'ap-settings-panel';
-            
+
             // 폰트 옵션 생성
             const fontOptions = this.fontList.map(f => `<option value="${f.value}">${f.name}</option>`).join('');
 
@@ -264,7 +264,7 @@
 
         parseLrc(lrcContent) {
             if (!lrcContent) return;
-            
+
             const lines = lrcContent.split('\n');
             const patternFull = /\[(\d+:\d+(?:\.\d+)?)\]\s*<(\d+:\d+(?:\.\d+)?)>\s*(.*)/;
             const patternStd = /\[(\d+):(\d+)(?:\.(\d+))?\](.*)/;
@@ -273,9 +273,9 @@
             lines.forEach(line => {
                 line = line.trim();
                 if (!line) return;
-                
+
                 let startT = 0, endT = null, text = "", matched = false;
-                
+
                 let mFull = line.match(patternFull);
                 if (mFull) {
                     startT = this.parseTime(mFull[1]);
@@ -316,7 +316,7 @@
         calculateGaps() {
             for (let i = 0; i < this.lyrics.length; i++) {
                 this.lyrics[i].needsCountdown = false;
-                let gap = (i === 0) ? this.lyrics[i].time : (this.lyrics[i].time - this.lyrics[i-1].endTime);
+                let gap = (i === 0) ? this.lyrics[i].time : (this.lyrics[i].time - this.lyrics[i - 1].endTime);
                 if (gap >= this.config.gapThreshold) this.lyrics[i].needsCountdown = true;
             }
         }
@@ -328,8 +328,8 @@
                 const div = document.createElement('div');
                 div.className = 'ap-line';
                 div.innerHTML = `<span>${line.text}</span>`;
-                
-                if(line.needsCountdown) {
+
+                if (line.needsCountdown) {
                     const dots = document.createElement('div');
                     dots.className = 'ap-dots';
                     dots.innerHTML = '<div class="ap-dot"></div><div class="ap-dot"></div><div class="ap-dot"></div>';
@@ -344,22 +344,22 @@
         // 3. 업데이트 루프 (애니메이션)
         // ==========================================
         update(currentTime) {
-            if(!this.lyrics.length) return;
-            
+            if (!this.lyrics.length) return;
+
             // 싱크 오프셋 적용 (마이너스일 경우 가사를 일찍 보여줘야 하므로 currentTime에 더하는 것이 아니라 time check에서 뺌)
             // 여기서는 직관적으로: Target Time = Current Time - Offset
             // 예: 오프셋이 +1.0이면 가사가 1초 늦게 나옴 (Video Time 5초일 때 가사 Time 4초 부분 표시)
             // 반대로 오프셋이 -1.0이면 가사가 1초 빨리 나옴 (Video Time 5초일 때 가사 Time 6초 부분 표시)
             // 즉, Logic Time = currentTime - syncOffset
             const time = currentTime - this.config.syncOffset;
-            
+
             // 현재 인덱스 탐색
             let idx = -1;
             for (let i = 0; i < this.lyrics.length; i++) {
                 if (time >= this.lyrics[i].time) idx = i;
                 else break;
             }
-            
+
             // 스크롤 (폰트크기 * 3 = 줄높이)
             // 설정된 폰트 크기를 가져와서 계산
             const lineHeight = this.config.fontSize * 3;
@@ -367,7 +367,7 @@
 
             this.domLines.forEach((div, i) => {
                 div.classList.remove('active', 'near', 'show-cnt');
-                
+
                 // 카운트다운 로직
                 if (i > idx && this.lyrics[i].needsCountdown) {
                     const remain = this.lyrics[i].time - time;
@@ -382,12 +382,12 @@
                 }
 
                 // 활성/비활성 스타일
-                if(i === idx) {
-                    div.classList.add('active'); 
+                if (i === idx) {
+                    div.classList.add('active');
                 } else if (Math.abs(i - idx) <= 2) {
                     div.classList.add('near');
                     div.style.transform = 'scale(0.9)';
-                    div.style.opacity = Math.max(0.2, 1 - Math.abs(i - idx)*0.3);
+                    div.style.opacity = Math.max(0.2, 1 - Math.abs(i - idx) * 0.3);
                 } else {
                     div.style.transform = 'scale(0.8)';
                     div.style.opacity = 0.1;
