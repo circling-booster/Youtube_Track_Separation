@@ -28,7 +28,6 @@
       "js": [
         "socket.io.js",
         "ui-templates.js",
-        "extract_info.js",
         "content.js"
       ],
       "run_at": "document_end",
