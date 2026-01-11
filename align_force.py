@@ -2,7 +2,7 @@
 Stable-Whisper를 이용한 강제 정렬 (Korean Character-Level Optimization)
 - 영어: 단어(Word) 단위 정렬
 - 한국어: 글자(Character/Syllable) 단위 정밀 정렬
-- Output: [mm:ss.xx] <mm:ss.xx> Token
+- [수정] 단어 연결 정보(^) 포함: 클라이언트에서 단어/글자 단위 선택 가능
 """
 
 import stable_whisper
@@ -26,72 +26,88 @@ def format_timestamp(seconds: float) -> str:
 
 def preprocess_text_for_sync(text: str) -> str:
     """
-    정렬 정확도 향상을 위한 텍스트 전처리
-    - 영어/숫자: 단어 단위 유지
-    - 한국어: 글자 단위로 분리 (띄어쓰기 포함)
+    Whisper 입력용 텍스트 전처리
+    (기존 로직 유지: 한국어는 글자 단위로 띄어쓰기하여 입력)
     """
     if not text: return ""
-
-    # 1. 기존 줄바꿈 제거 및 공백 정리
     text = text.replace('\n', ' ').strip()
-    
     tokens = []
-    # 공백 기준으로 1차 분리 (단어 단위)
     raw_words = text.split()
     
     for word in raw_words:
-        # 한국어 포함 여부 확인 (가-힣)
         has_korean = any(ord('가') <= ord(c) <= ord('힣') for c in word)
-        
         if has_korean:
-            # 한국어가 포함된 경우, 글자 단위로 분리
-            # 단, 영어/숫자가 섞여있어도 한국어 맥락이라면 글자 단위 처리가 싱크에 유리함
-            for char in word:
-                tokens.append(char)
+            for char in word: tokens.append(char)
         else:
-            # 순수 영어/숫자/기호인 경우 단어 단위 유지
             tokens.append(word)
-            
-    # Whisper가 인식하기 좋게 스페이스로 조인
     return " ".join(tokens)
 
 def align_lyrics(audio_path: str, text: str, device: str = 'cuda', language: str = 'ko') -> str:
     """
     음성과 텍스트를 강제 정렬하여 LRC 생성
+    - 단어 내부의 글자(이어지는 글자)에는 '^' 접두어를 붙임
     """
     logger.info(f"[Align] Whisper 정렬 시작 (Device: {device})")
-    logger.info(f"[Align] 원본 텍스트 길이: {len(text)}자")
     
     model = None
     try:
-        # 1. 텍스트 전처리 (한국어 글자 단위 분해)
-        processed_text = preprocess_text_for_sync(text)
-        logger.info("[Align] 한국어 글자 단위 최적화 적용됨")
+        # 1. 원본 텍스트 분석하여 '이어지는 글자' 여부 파악
+        # original_tokens: [{'text': '사', 'is_start': True}, {'text': '랑', 'is_start': False}, ...]
+        original_tokens = []
+        raw_words = text.replace('\n', ' ').strip().split()
         
-        # 2. 모델 로드
+        for word in raw_words:
+            has_korean = any(ord('가') <= ord(c) <= ord('힣') for c in word)
+            if has_korean:
+                for i, char in enumerate(word):
+                    original_tokens.append({
+                        'text': char,
+                        'is_start': (i == 0) # 단어의 첫 글자만 True
+                    })
+            else:
+                original_tokens.append({'text': word, 'is_start': True})
+
+        # 2. Whisper 입력용 텍스트 생성
+        processed_text = " ".join([t['text'] for t in original_tokens])
+        
+        # 3. 모델 로드 및 정렬
         model = stable_whisper.load_model('medium', device=device)
-        
-        # 3. 정렬 수행 (전처리된 텍스트 사용)
-        # [수정] remove_punctuation 옵션 제거 (지원하지 않는 인자)
         result = model.align(audio_path, processed_text, language=language)
         
-        # 4. LRC 변환
+        # 4. LRC 변환 (Whisper 결과와 원본 토큰 매핑)
         lines = ["[by:AiPlugs-TrackSeparation]"]
         
+        # Whisper 결과 플랫하게 펼치기
+        whisper_words = []
         for segment in result.segments:
             for word in segment.words:
-                start = word.start
-                end = word.end
                 w_text = word.word.strip()
-                
-                if not w_text: continue
-                
-                ts_start = format_timestamp(start)
-                ts_end = format_timestamp(end)
-                
-                # 포맷: [시작] <끝> 토큰
-                # 한국어는 글자 하나하나가 이 포맷으로 출력됨
-                lines.append(f"[{ts_start}] <{ts_end}> {w_text}")
+                if w_text:
+                    whisper_words.append({
+                        'start': word.start,
+                        'end': word.end,
+                        'text': w_text
+                    })
+        
+        # 1:1 매핑 시도 (Whisper가 토큰을 생략하지 않았다고 가정)
+        # 만약 개수가 다르면 안전하게 접두어를 붙이지 않음 (Fail-safe)
+        use_markers = len(whisper_words) == len(original_tokens)
+        if not use_markers:
+            logger.warning(f"[Align] 토큰 개수 불일치(Orig:{len(original_tokens)} vs Whisper:{len(whisper_words)}). 단어 그룹핑 비활성화.")
+
+        for i, w_obj in enumerate(whisper_words):
+            start = format_timestamp(w_obj['start'])
+            end = format_timestamp(w_obj['end'])
+            text_content = w_obj['text']
+            
+            # 이어지는 글자 마킹 (^)
+            prefix = ""
+            if use_markers:
+                # 원본 토큰의 is_start가 False이면(이어지는 글자면) ^ 붙임
+                if not original_tokens[i]['is_start']:
+                    prefix = "^"
+            
+            lines.append(f"[{start}] <{end}> {prefix}{text_content}")
         
         logger.info(f"[Align] 정렬 완료: {len(lines)}개의 타임스탬프 생성")
         return '\n'.join(lines)
@@ -103,8 +119,6 @@ def align_lyrics(audio_path: str, text: str, device: str = 'cuda', language: str
         return None
     
     finally:
-        # 메모리 명시적 해제
-        if model: 
-            del model
+        if model: del model
         gc.collect()
         torch.cuda.empty_cache()

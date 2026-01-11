@@ -1,7 +1,6 @@
 """
-통합 파이프라인: 다운로드 → 분리 → 정렬 → 응답
+통합 파이프라인: 다운로드 → 분리 → 정렬(JSON) → 응답
 VRAM 메모리 안전성 보장 & 스마트 캐싱 & 로직 통합
-[수정] 수동/자동 자막 우선순위 로직 및 설정값 추가
 """
 
 import logging
@@ -9,6 +8,7 @@ import gc
 import torch
 import time
 import subprocess
+import json
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
 
@@ -27,11 +27,7 @@ class TrackSeparationWorkflow:
         self.downloader = YouTubeDownloader(str(download_dir))
         self.lyrics_crawler = BugsLyricsCrawler()
         self.text_cleaner = TextCleaner()
-        self.MAX_FILE_SIZE_MB = 30  # 최대 파일 크기 제한 (MB)
-        
-        # [설정] 수동 자막(Manual Subtitles) 필수 여부
-        # True: 수동 자막이 없으면 자동 자막을 다운로드하지 않고 텍스트 처리를 건너뜁니다.
-        # False: 수동 자막이 없으면 자동 자막(Auto-generated)을 사용합니다.
+        self.MAX_FILE_SIZE_MB = 30
         self.REQUIRE_MANUAL_SUBTITLES = True 
 
     def process_video(
@@ -44,7 +40,7 @@ class TrackSeparationWorkflow:
         
         logger.info(f"\n{'='*70}\n[Workflow] 영상 처리: {video_id}\n{'='*70}")
 
-        # [0단계] 캐시 확인
+        # [0단계] 캐시 확인 (JSON 우선)
         cached = self._check_cache(video_id)
         if cached:
             if progress_callback: progress_callback(100, '캐시 데이터 로드 완료')
@@ -57,7 +53,7 @@ class TrackSeparationWorkflow:
             'success': False,
             'video_id': video_id,
             'tracks': {},
-            'lyrics_lrc': None,
+            'lyrics_lrc': None, # 클라이언트는 이 필드에서 JSON/LRC를 모두 받음
             'error': None
         }
 
@@ -72,114 +68,82 @@ class TrackSeparationWorkflow:
             audio_file = self.downloader.download(video_id, output_dir=work_dir)
             if not audio_file: raise Exception("오디오 다운로드 실패")
 
-            # [1-1단계] 파일 크기 검사 (30MB 제한)
             file_size_mb = audio_file.stat().st_size / (1024 * 1024)
-            logger.info(f"[Workflow] 다운로드 파일 크기: {file_size_mb:.2f} MB")
-            
             if file_size_mb > self.MAX_FILE_SIZE_MB:
-                # 파일 삭제 후 에러 처리
-                try:
-                    audio_file.unlink()
-                except:
-                    pass
-                error_msg = f"파일 크기가 너무 큽니다 ({file_size_mb:.1f}MB). 30MB 이하의 영상만 처리가 가능합니다."
-                logger.warning(f"[Workflow] {error_msg}")
-                raise Exception(error_msg)
+                try: audio_file.unlink()
+                except: pass
+                raise Exception(f"파일 크기 초과 ({file_size_mb:.1f}MB > 30MB)")
 
-            # [2단계] Demucs 분리 (VRAM 관리 핵심)
+            # [2단계] Demucs 분리 (VRAM 관리)
             if progress_callback: progress_callback(20, 'AI 오디오 분리 및 MP3 변환 중 (GPU)...')
             
             processor = DemucsProcessor(str(self.download_dir))
             separation_dir = work_dir / 'separated'
             
-            # 2-1. 모델 로드 (여기서만 존재)
+            # 모델 로드 및 처리
             demucs_model = processor.load_model(model)
+            success = processor.process_with_model(demucs_model, audio_file, separation_dir, progress_callback)
             
-            # 2-2. 분리 수행 (MP3 저장 포함)
-            success = processor.process_with_model(
-                demucs_model, 
-                audio_file, 
-                separation_dir, 
-                progress_callback=progress_callback
-            )
-            
-            # 2-3. 모델 즉시 해제 (Whisper를 위해 VRAM 확보 필수)
+            # 모델 즉시 해제
             del demucs_model
             demucs_model = None
             gc.collect()
             torch.cuda.empty_cache()
-            time.sleep(2) # 메모리 해제 안정화 대기
+            time.sleep(2)
 
-            if not success: raise Exception("Demucs 분리 및 변환 실패")
+            if not success: raise Exception("Demucs 분리 실패")
 
-            # [3단계] 트랙 정보 수집 (MP3 기준)
+            # [3단계] 트랙 정보 수집
             tracks = processor.get_separated_tracks(str(separation_dir))
             if not tracks: raise Exception("분리된 트랙 없음")
             
-            # Whisper 정렬을 위해 Vocal 트랙의 절대 경로 확보
             vocal_absolute_path = tracks.get('vocal', {}).get('path')
             
-            # 클라이언트용 경로 매핑 (.mp3)
             for t, info in tracks.items():
                 info['path'] = f"/downloads/{video_id}/{t}.mp3"
             result['tracks'] = tracks
 
-            # [4단계] 텍스트 리소스 확보 (SourceType 기반 분기)
+            # [4단계] 텍스트 리소스 확보
             lyrics_text = None
             source_type = meta.get('sourceType', 'general')
 
             if progress_callback: progress_callback(70, '자막/가사 검색 중...')
 
-            # 4-A. 공식 음원 (Official) -> 크롤링 우선
+            # 4-A. 공식 음원 크롤링
             if source_type == 'official' and meta.get('title'):
                 try:
-                    logger.info(f"[Text] 공식 음원 크롤링 시도: {meta['title']}")
                     res = self.lyrics_crawler.fetch_lyrics(meta['title'], meta['artist'], meta['album'])
-                    if res:
-                        lyrics_text = self.text_cleaner.clean_text(res['lyrics'])
-                        logger.info("[Text] 크롤링 성공")
+                    if res: lyrics_text = self.text_cleaner.clean_text(res['lyrics'])
                 except Exception as e:
                     logger.warning(f"[Text] 크롤링 실패: {e}")
 
-            # 4-B. 일반 영상 (General) 또는 크롤링 실패 -> 자막 다운로드
-            # [수정] 자막 다운로드 로직 내부에서 설정값(REQUIRE_MANUAL_SUBTITLES)에 따라 분기 처리됨
+            # 4-B. 자막 다운로드
             if not lyrics_text:
                 try:
-                    logger.info("[Text] 유튜브 자막 검색 시도")
                     sub_file = self._download_subtitles(video_id, work_dir)
-                    
                     if sub_file:
-                        # VTT -> Pure Text (with TextCleaner)
                         lyrics_text = self.text_cleaner.parse_vtt_to_text(sub_file)
-                        if lyrics_text:
-                            logger.info("[Text] 자막 확보 및 정제 완료")
-                    else:
-                        logger.info("[Text] 적절한 자막 파일을 찾을 수 없습니다. (설정 또는 자막 부재)")
-
                 except Exception as e:
-                    logger.warning(f"[Text] 자막 처리 실패: {e}")
+                    logger.warning(f"[Text] 자막 실패: {e}")
 
-            # [5단계] Whisper 정렬 (텍스트 존재 시)
-            # Demucs 메모리가 해제된 상태에서 실행됨
+            # [5단계] Whisper 정렬 (JSON 출력)
             if lyrics_text and len(lyrics_text) > 10 and vocal_absolute_path:
-                if progress_callback: progress_callback(85, 'AI 싱크 정렬 중 (Whisper)...')
+                if progress_callback: progress_callback(85, 'AI 정밀 정렬 중 (Whisper)...')
                 try:
-                    # 안전을 위해 VRAM 체크 또는 CPU Fallback 고려 가능하나 여기선 CUDA 우선
                     device = 'cuda' if torch.cuda.is_available() else 'cpu'
                     
-                    lrc = align_lyrics(
-                        vocal_absolute_path, 
-                        lyrics_text, 
-                        device=device
-                    )
-                    if lrc:
-                        result['lyrics_lrc'] = lrc
-                        (work_dir / 'aligned.lrc').write_text(lrc, encoding='utf-8')
-                        logger.info("[Align] 정렬 완료")
+                    # align_lyrics가 이제 JSON 문자열을 반환한다고 가정
+                    lyrics_json_str = align_lyrics(vocal_absolute_path, lyrics_text, device=device)
+                    
+                    if lyrics_json_str:
+                        # JSON 파일로 저장
+                        (work_dir / 'aligned.json').write_text(lyrics_json_str, encoding='utf-8')
+                        
+                        # 결과에 포함 (변수명은 호환성을 위해 lyrics_lrc 유지)
+                        result['lyrics_lrc'] = lyrics_json_str
+                        logger.info("[Align] 정렬 및 JSON 저장 완료")
                 except Exception as e:
                     logger.error(f"[Align] 정렬 실패: {e}")
-            else:
-                logger.info("[Workflow] 텍스트 리소스 없음 - 오디오만 반환")
             
             result['success'] = True
             if progress_callback: progress_callback(100, '완료!')
@@ -192,14 +156,12 @@ class TrackSeparationWorkflow:
             return result
             
         finally:
-            # 안전장치: 혹시 모델이 남아있다면 해제
-            if demucs_model:
-                del demucs_model
+            if demucs_model: del demucs_model
             gc.collect()
             torch.cuda.empty_cache()
 
     def _check_cache(self, video_id: str) -> Optional[Dict]:
-        """캐시 확인"""
+        """캐시 확인 (JSON -> LRC 순)"""
         work_dir = self.download_dir / video_id
         separation_dir = work_dir / 'separated'
         
@@ -210,32 +172,33 @@ class TrackSeparationWorkflow:
         if not all(k in tracks for k in required):
             return None
             
-        # 캐시된 파일도 MP3 경로로 매핑
         for t, info in tracks.items():
             info['path'] = f"/downloads/{video_id}/{t}.mp3"
             
-        lrc = None
-        lrc_path = work_dir / 'aligned.lrc'
-        if lrc_path.exists():
-            lrc = lrc_path.read_text(encoding='utf-8')
+        lyrics_content = None
+        
+        # 1. JSON 캐시 확인
+        json_path = work_dir / 'aligned.json'
+        if json_path.exists():
+            lyrics_content = json_path.read_text(encoding='utf-8')
+        else:
+            # 2. LRC 캐시 확인 (하위 호환)
+            lrc_path = work_dir / 'aligned.lrc'
+            if lrc_path.exists():
+                lyrics_content = lrc_path.read_text(encoding='utf-8')
             
         return {
             'success': True,
             'video_id': video_id,
             'tracks': tracks,
-            'lyrics_lrc': lrc,
+            'lyrics_lrc': lyrics_content,
             'cached': True
         }
 
     def _download_subtitles(self, video_id: str, output_dir: Path) -> Optional[str]:
-        """
-        yt-dlp로 자막 다운로드 (2단계 우선순위 전략 적용)
-        1. 수동 자막(Manual) 우선 다운로드
-        2. 실패 시, REQUIRE_MANUAL_SUBTITLES 설정에 따라 자동 자막(Auto) 시도 또는 중단
-        """
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # 이전 자막 파일 정리 (중복 방지)
+        # 기존 자막 삭제
         for old_file in output_dir.glob("*.vtt"):
             try: old_file.unlink()
             except: pass
@@ -243,39 +206,22 @@ class TrackSeparationWorkflow:
         def try_download(is_auto: bool):
             cmd = [
                 'yt-dlp',
-                '--write-auto-sub' if is_auto else '--write-sub', # 자동 vs 수동 옵션 분리
+                '--write-auto-sub' if is_auto else '--write-sub',
                 '--sub-lang', 'ko,en',
                 '--skip-download',
                 '-o', str(output_dir / '%(title)s.%(ext)s'),
                 url
             ]
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            # 파일 확인
             candidates = list(output_dir.glob('*.vtt'))
             if not candidates: return None
-            
-            # 우선순위 선택: 한국어(.ko) > 그 외
             for f in candidates:
                 if '.ko' in f.name: return str(f)
             return str(candidates[0])
 
-        # Step 1: 수동 자막 시도
-        logger.info("[Text] 수동 자막 검색 중...")
-        manual_sub = try_download(is_auto=False)
-        if manual_sub:
-            logger.info(f"[Text] 수동 자막 확보: {Path(manual_sub).name}")
-            return manual_sub
+        manual_sub = try_download(False)
+        if manual_sub: return manual_sub
         
-        # Step 2: 자동 자막 시도 (설정에 따라)
-        if self.REQUIRE_MANUAL_SUBTITLES:
-            logger.info("[Text] 수동 자막이 없습니다. (설정에 의해 자동 자막은 건너뜀)")
-            return None
+        if self.REQUIRE_MANUAL_SUBTITLES: return None
             
-        logger.info("[Text] 수동 자막 없음. 자동 자막 검색 시도...")
-        auto_sub = try_download(is_auto=True)
-        if auto_sub:
-            logger.info(f"[Text] 자동 자막 확보: {Path(auto_sub).name}")
-            return auto_sub
-
-        return None
+        return try_download(True)
