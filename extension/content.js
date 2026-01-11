@@ -1,6 +1,6 @@
 /**
- * YouTube Track Separation - Main Controller (Integrated Full Version)
- * 포함 기능: 자동 시작 타이머, 메타데이터 식별, 소켓 통신, 리소스 정리
+ * YouTube Track Separation - Main Controller
+ * 수정사항: 10초 자동 시작 카운트다운 로직 완전 제거
  */
 
 (function () {
@@ -16,12 +16,6 @@
       // 상태 관리
       this.lastUrl = location.href;
       
-      // 자동 처리 관련 (복구됨)
-      this.autoProcessTimer = null;
-      this.autoProcessCountdown = 10;
-      this.isAutoProcessCancelled = false;
-      this.countdownInterval = null;
-
       this.init();
     }
 
@@ -56,21 +50,13 @@
         console.log(`[App] Video changed: ${this.videoId} -> ${newVideoId}`);
         this.cleanup(); // 이전 리소스 정리
         this.videoId = newVideoId;
-        this.isAutoProcessCancelled = false;
         
         this.tryAddButton();
-        
-        // 페이지 안정화 후 자동 처리 타이머 시작 (복구됨)
-        setTimeout(() => this.startAutoProcessTimer(), 2000);
+        // 자동 시작 타이머 로직 제거됨
       }
     }
 
     cleanup() {
-        // 타이머 정리
-        if (this.autoProcessTimer) clearTimeout(this.autoProcessTimer);
-        if (this.countdownInterval) clearInterval(this.countdownInterval);
-        this.hideCountdownUI();
-
         // 플레이어 정리
         if (this.player) {
             this.player.destroy();
@@ -82,75 +68,13 @@
         document.getElementById('yt-sep-setup-panel')?.remove();
         document.getElementById('yt-custom-player-ui')?.remove();
         document.getElementById('yt-sep-minimized-icon')?.remove();
+        // 카운트다운 UI 정리 로직 제거됨
 
         if (this.socket) {
             this.socket.disconnect();
             this.socket = null;
         }
         this.isProcessing = false;
-    }
-
-    // --- Auto Process Logic (Restored) ---
-
-    startAutoProcessTimer() {
-      if (this.isProcessing || document.getElementById('yt-custom-player-ui')) return;
-
-      this.showCountdownUI();
-      this.autoProcessCountdown = 10;
-      this.updateCountdownDisplay();
-
-      this.countdownInterval = setInterval(() => {
-        this.autoProcessCountdown--;
-        this.updateCountdownDisplay();
-        if (this.autoProcessCountdown <= 0) {
-            clearInterval(this.countdownInterval);
-        }
-      }, 1000);
-
-      this.autoProcessTimer = setTimeout(() => {
-        if (!this.isAutoProcessCancelled && !this.isProcessing) {
-          this.startProcessLogic(); // 자동 시작
-        }
-        this.hideCountdownUI();
-      }, 10000);
-    }
-
-    showCountdownUI() {
-      let el = document.getElementById('yt-sep-countdown');
-      if (!el) {
-        el = document.createElement('div');
-        el.id = 'yt-sep-countdown';
-        el.className = 'yt-sep-countdown';
-        el.innerHTML = `
-            <div style="font-weight:bold; margin-bottom:5px;">🎹 AI 트랙 분리</div>
-            <div id="yt-sep-countdown-msg" style="color:#aaa; margin-bottom:5px;">10초 후 자동 시작...</div>
-            <button id="yt-sep-auto-now" class="yt-sep-btn">지금 시작</button>
-            <button id="yt-sep-auto-cancel" class="yt-sep-btn cancel">취소</button>
-        `;
-        document.body.appendChild(el);
-        
-        document.getElementById('yt-sep-auto-now').onclick = () => {
-            this.hideCountdownUI();
-            this.startProcessLogic();
-        };
-        document.getElementById('yt-sep-auto-cancel').onclick = () => {
-            this.isAutoProcessCancelled = true;
-            this.hideCountdownUI();
-        };
-      }
-      el.classList.add('active');
-    }
-
-    hideCountdownUI() {
-        const el = document.getElementById('yt-sep-countdown');
-        if (el) el.classList.remove('active');
-        if (this.countdownInterval) clearInterval(this.countdownInterval);
-        if (this.autoProcessTimer) clearTimeout(this.autoProcessTimer);
-    }
-
-    updateCountdownDisplay() {
-        const el = document.getElementById('yt-sep-countdown-msg');
-        if (el) el.textContent = `${this.autoProcessCountdown}초 후 자동 시작...`;
     }
 
     // --- UI Styles ---
@@ -169,15 +93,7 @@
         .yt-sep-btn.cancel { background: #444; color: #fff; }
         .yt-sep-btn.cancel:hover { background: #555; }
         
-        .yt-sep-countdown { 
-            position: fixed; top: 80px; right: 20px; 
-            background: rgba(33, 33, 33, 0.95); border: 1px solid #444;
-            padding: 15px; border-radius: 8px; font-size: 13px; z-index: 9999; 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: none;
-            backdrop-filter: blur(5px);
-        }
-        .yt-sep-countdown.active { display: block; animation: fadeIn 0.3s; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+        /* 카운트다운 관련 스타일 제거됨 */
       `;
       document.head.appendChild(style);
     }
@@ -193,15 +109,13 @@
         btn.style.verticalAlign = 'middle';
         btn.onclick = (e) => {
             e.stopPropagation();
-            this.isAutoProcessCancelled = true; // 수동 클릭 시 자동 취소
-            this.hideCountdownUI();
             this.openSetupPanel();
         };
         controls.insertBefore(btn, controls.firstChild);
       }
     }
 
-    openSetupPanel(isAuto = false) {
+    openSetupPanel() {
       if (document.getElementById('yt-sep-setup-panel')) return;
       if (!window.YTSepUITemplates?.setupPanelHTML) return;
 
@@ -217,20 +131,12 @@
       panel.innerHTML = window.YTSepUITemplates.setupPanelHTML();
       document.body.appendChild(panel);
 
-      // 자동 모드일 경우 바로 UI 갱신
-      if (isAuto) {
-          const pArea = document.getElementById('sep-progress-area');
-          const sBtn = document.getElementById('sep-start-btn');
-          if(pArea) pArea.style.display = 'block';
-          if(sBtn) sBtn.style.display = 'none';
-      }
-
       document.getElementById('sep-start-btn').onclick = () => this.startProcessLogic();
       document.getElementById('sep-close-btn').onclick = () => panel.remove();
     }
 
     startProcessLogic() {
-        // 메타데이터 추출 및 소스 타입 식별 (개선됨)
+        // 메타데이터 추출 및 소스 타입 식별
         let meta = window.YoutubeMetaExtractor ? window.YoutubeMetaExtractor.getMusicInfo() : { sourceType: 'general' };
         this.processVideo(meta);
     }
@@ -239,8 +145,8 @@
         if (!this.videoId || this.isProcessing) return;
         this.isProcessing = true;
         
-        // UI가 열려있지 않다면 염 (자동 실행 시)
-        this.openSetupPanel(true);
+        // UI가 열려있지 않다면 염
+        this.openSetupPanel();
 
         const startBtn = document.getElementById('sep-start-btn');
         const progressArea = document.getElementById('sep-progress-area');

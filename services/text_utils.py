@@ -1,5 +1,6 @@
 import re
 import logging
+import html
 
 logger = logging.getLogger(__name__)
 
@@ -12,23 +13,27 @@ class TextCleaner:
     def __init__(self):
         # 정규표현식 컴파일 (성능 최적화)
         self.patterns = [
-            # 1. 괄호로 묶인 배경음/효과음/감정 ([Music], (Sighs), *gasp*)
+            # 1. VTT/SRT 타임스탬프 잔여물 제거 (ex: 00:00:12.345 --> ...)
+            (re.compile(r'.*-->.*'), ''), 
+
+            # 2. 괄호로 묶인 배경음/효과음/감정 ([Music], (Sighs), *gasp*)
             (re.compile(r'\[.*?\]'), ''), 
             (re.compile(r'\(.*?\)'), ''),
             (re.compile(r'\*.*?\*'), ''),
             
-            # 2. 음악 관련 기호 (♪, ♫, ♬, ♩, #)
+            # 3. 음악 관련 기호 (♪, ♫, ♬, ♩, #)
             (re.compile(r'[♪♫♬♩#]'), ''),
             
-            # 3. 화자 식별 (Name:, >>) - 줄의 시작 부분 매칭
+            # 4. 화자 식별 및 꺾쇠 (Name:, >>) 
+            # [수정] 문장 중간의 '>>' 도 제거하도록 수정 (ex: Hello >> World -> Hello World)
             (re.compile(r'^[A-Za-z0-9가-힣\s]+:\s*'), ''),
-            (re.compile(r'^>>\s*'), ''),
+            (re.compile(r'>>+'), ''),  # >>, >>> 등 모든 꺾쇠 제거
             
-            # 4. HTML 및 서식 태그 (<i>, </i>, <font...>, {\an8} 등)
+            # 5. HTML 및 서식 태그 (<i>, </i>, <font...>, {\an8} 등)
             (re.compile(r'<[^>]+>'), ''),
             (re.compile(r'\{.*?\}'), ''),
             
-            # 5. 특수 공백 및 중복 공백 정리
+            # 6. 특수 공백 및 중복 공백 정리
             (re.compile(r'\s+'), ' ') 
         ]
 
@@ -36,8 +41,10 @@ class TextCleaner:
         """단일 라인 정제"""
         if not text:
             return ""
-            
-        cleaned = text
+        
+        # HTML 엔티티 디코딩 (ex: &nbsp; -> space, &gt; -> >)
+        cleaned = html.unescape(text)
+        
         for pattern, replacement in self.patterns:
             cleaned = pattern.sub(replacement, cleaned)
             
@@ -65,7 +72,11 @@ class TextCleaner:
                 if not line: continue
                 if line == 'WEBVTT': continue
                 if line.startswith('Kind:') or line.startswith('Language:'): continue
-                if time_pattern.match(line): continue
+                if line.startswith('NOTE'): continue # 주석 라인 스킵
+                
+                # [수정] 타임스탬프 라인 필터링 강화
+                if time_pattern.match(line) or '-->' in line: 
+                    continue
                 
                 # 텍스트 정제
                 cleaned = self.clean_text(line)
