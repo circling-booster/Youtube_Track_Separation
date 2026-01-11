@@ -1,7 +1,7 @@
 """
 통합 파이프라인: 다운로드 → 분리 → 정렬 → 응답
 VRAM 메모리 안전성 보장 & 스마트 캐싱 & 로직 통합
-[수정] 30MB 용량 제한 및 MP3 변환 적용
+[수정] 수동/자동 자막 우선순위 로직 및 설정값 추가
 """
 
 import logging
@@ -28,6 +28,11 @@ class TrackSeparationWorkflow:
         self.lyrics_crawler = BugsLyricsCrawler()
         self.text_cleaner = TextCleaner()
         self.MAX_FILE_SIZE_MB = 30  # 최대 파일 크기 제한 (MB)
+        
+        # [설정] 수동 자막(Manual Subtitles) 필수 여부
+        # True: 수동 자막이 없으면 자동 자막을 다운로드하지 않고 텍스트 처리를 건너뜁니다.
+        # False: 수동 자막이 없으면 자동 자막(Auto-generated)을 사용합니다.
+        self.REQUIRE_MANUAL_SUBTITLES = True 
 
     def process_video(
         self,
@@ -137,15 +142,20 @@ class TrackSeparationWorkflow:
                     logger.warning(f"[Text] 크롤링 실패: {e}")
 
             # 4-B. 일반 영상 (General) 또는 크롤링 실패 -> 자막 다운로드
+            # [수정] 자막 다운로드 로직 내부에서 설정값(REQUIRE_MANUAL_SUBTITLES)에 따라 분기 처리됨
             if not lyrics_text:
                 try:
                     logger.info("[Text] 유튜브 자막 검색 시도")
                     sub_file = self._download_subtitles(video_id, work_dir)
+                    
                     if sub_file:
                         # VTT -> Pure Text (with TextCleaner)
                         lyrics_text = self.text_cleaner.parse_vtt_to_text(sub_file)
                         if lyrics_text:
                             logger.info("[Text] 자막 확보 및 정제 완료")
+                    else:
+                        logger.info("[Text] 적절한 자막 파일을 찾을 수 없습니다. (설정 또는 자막 부재)")
+
                 except Exception as e:
                     logger.warning(f"[Text] 자막 처리 실패: {e}")
 
@@ -218,28 +228,54 @@ class TrackSeparationWorkflow:
         }
 
     def _download_subtitles(self, video_id: str, output_dir: Path) -> Optional[str]:
-        """yt-dlp로 자막 다운로드"""
+        """
+        yt-dlp로 자막 다운로드 (2단계 우선순위 전략 적용)
+        1. 수동 자막(Manual) 우선 다운로드
+        2. 실패 시, REQUIRE_MANUAL_SUBTITLES 설정에 따라 자동 자막(Auto) 시도 또는 중단
+        """
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # 한국어, 영어 순으로 자막 다운로드 시도
-        cmd = [
-            'yt-dlp',
-            '--write-sub', '--write-auto-sub',
-            '--sub-lang', 'ko,en',
-            '--skip-download',
-            '-o', str(output_dir / '%(title)s.%(ext)s'),
-            url
-        ]
+        # 이전 자막 파일 정리 (중복 방지)
+        for old_file in output_dir.glob("*.vtt"):
+            try: old_file.unlink()
+            except: pass
 
-        try:
+        def try_download(is_auto: bool):
+            cmd = [
+                'yt-dlp',
+                '--write-auto-sub' if is_auto else '--write-sub', # 자동 vs 수동 옵션 분리
+                '--sub-lang', 'ko,en',
+                '--skip-download',
+                '-o', str(output_dir / '%(title)s.%(ext)s'),
+                url
+            ]
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            # 파일 확인
             candidates = list(output_dir.glob('*.vtt'))
             if not candidates: return None
             
-            # 한국어 우선 매칭
+            # 우선순위 선택: 한국어(.ko) > 그 외
             for f in candidates:
                 if '.ko' in f.name: return str(f)
             return str(candidates[0])
-            
-        except Exception:
+
+        # Step 1: 수동 자막 시도
+        logger.info("[Text] 수동 자막 검색 중...")
+        manual_sub = try_download(is_auto=False)
+        if manual_sub:
+            logger.info(f"[Text] 수동 자막 확보: {Path(manual_sub).name}")
+            return manual_sub
+        
+        # Step 2: 자동 자막 시도 (설정에 따라)
+        if self.REQUIRE_MANUAL_SUBTITLES:
+            logger.info("[Text] 수동 자막이 없습니다. (설정에 의해 자동 자막은 건너뜀)")
             return None
+            
+        logger.info("[Text] 수동 자막 없음. 자동 자막 검색 시도...")
+        auto_sub = try_download(is_auto=True)
+        if auto_sub:
+            logger.info(f"[Text] 자동 자막 확보: {Path(auto_sub).name}")
+            return auto_sub
+
+        return None

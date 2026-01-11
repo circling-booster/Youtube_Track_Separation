@@ -1,9 +1,8 @@
 /**
  * Hybrid Track Player Engine
- * - 기본 (1.0배속): AudioBuffer 모드 (정밀 싱크, 빠른 반응)
- * - 배속 (변속): HTMLAudioElement 모드 (피치 보존)
- * - [Fix] 볼륨 조절 실시간 동기화
- * - [New] 몰입 모드 (UI 토글) 지원
+ * - 기본 (1.0배속): AudioBuffer 모드
+ * - 배속 (변속): HTMLAudioElement 모드
+ * - [New] 자동 숨김(Auto-Hide) 기능 추가
  */
 (function(root) {
     class AudioPlayer {
@@ -25,6 +24,12 @@
             this.container = null;
             this.minimizedIcon = null;
 
+            // Auto-Hide 관련
+            this.hideTimer = null;
+            this.isHoveringUI = false;
+            this.isDragging = false; // 슬라이더 조작 상태
+            this.resetAutoHide = this.resetAutoHide.bind(this);
+
             this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
             this.updateLoop = this.updateLoop.bind(this);
             this.handleVideoEvent = this.handleVideoEvent.bind(this);
@@ -43,9 +48,44 @@
 
         async init() {
             this.createUI();
+            this.setupAutoHide(); // 자동 숨김 로직 초기화
             this.attachFullscreenListener();
             await this.loadAllTracks();
             this.updateLoop();
+        }
+
+        // [New] 자동 숨김 설정
+        setupAutoHide() {
+            // UI 영역 호버 감지
+            if (this.container) {
+                this.container.addEventListener('mouseenter', () => { this.isHoveringUI = true; this.resetAutoHide(); });
+                this.container.addEventListener('mouseleave', () => { this.isHoveringUI = false; this.resetAutoHide(); });
+            }
+
+            // 전역 활동 감지
+            document.addEventListener('mousemove', this.resetAutoHide);
+            document.addEventListener('click', this.resetAutoHide);
+            document.addEventListener('keydown', this.resetAutoHide);
+
+            this.resetAutoHide();
+        }
+
+        // [New] 타이머 리셋
+        resetAutoHide() {
+            if (!this.container) return;
+
+            // UI 표시 (idle 클래스 제거)
+            this.container.classList.remove('ui-idle');
+
+            if (this.hideTimer) clearTimeout(this.hideTimer);
+
+            // 3초 후 숨김 시도
+            this.hideTimer = setTimeout(() => {
+                // 마우스가 UI 위에 있거나 슬라이더 드래그 중이면 숨기지 않음
+                if (!this.isHoveringUI && !this.isDragging) {
+                    this.container.classList.add('ui-idle');
+                }
+            }, 3000);
         }
 
         attachFullscreenListener() {
@@ -61,7 +101,6 @@
                 this.container.classList.add('fs-mode');
             } else {
                 this.container.classList.remove('fs-mode');
-                // 전체화면 나가면 숨김 모드 해제 (선택사항, UX상 이게 자연스러움)
                 this.container.classList.remove('hide-peripherals');
             }
         }
@@ -233,8 +272,10 @@
                     const prog = document.getElementById('cp-progress');
                     if (prog) prog.value = pct;
                     
-                    document.getElementById('cp-curr-time').textContent = this.formatTime(v.currentTime);
-                    document.getElementById('cp-total-time').textContent = this.formatTime(total);
+                    const currText = document.getElementById('cp-curr-time');
+                    if(currText) currText.textContent = this.formatTime(v.currentTime);
+                    const totalText = document.getElementById('cp-total-time');
+                    if(totalText) totalText.textContent = this.formatTime(total);
                 }
             }
             this.rafId = requestAnimationFrame(this.updateLoop);
@@ -246,6 +287,7 @@
             if (!this.container) {
                 this.container = document.createElement('div');
                 this.container.id = 'yt-custom-player-ui';
+                this.container.className = 'yt-sep-ui';
                 this.container.innerHTML = window.YTSepUITemplates.customPlayerHTML(['vocal', 'bass', 'drum', 'other']);
                 document.body.appendChild(this.container);
                 
@@ -256,7 +298,7 @@
 
             this.createMinimizedIcon();
 
-            // 이벤트 바인딩
+            // === Event Bindings ===
             document.getElementById('cp-close-btn').onclick = () => this.destroy();
             document.getElementById('cp-minimize-btn').onclick = () => this.toggleMinimize(true);
             document.getElementById('cp-play-btn').onclick = () => {
@@ -264,30 +306,54 @@
                 if(v) v.paused ? v.play() : v.pause();
             };
 
-            // [추가] UI 토글 버튼 이벤트
-            const toggleBtn = document.getElementById('cp-toggle-ui-btn');
-            if (toggleBtn) {
-                toggleBtn.onclick = () => {
-                    this.container.classList.toggle('hide-peripherals');
-                    // 아이콘 변경 (선택 사항)
-                    const isHidden = this.container.classList.contains('hide-peripherals');
-                    toggleBtn.innerHTML = isHidden ? '🔳' : '👁️'; 
-                    toggleBtn.style.opacity = isHidden ? '0.5' : '1.0';
-                };
-            }
+            const opacitySlider = document.getElementById('cp-opacity-slider');
+            if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
             
             const progress = document.getElementById('cp-progress');
-            progress.oninput = () => this.isDragging = true;
+            progress.onmousedown = () => { this.isDragging = true; this.resetAutoHide(); };
+            progress.onmouseup = () => { this.isDragging = false; this.resetAutoHide(); };
+            progress.oninput = () => { this.isDragging = true; this.resetAutoHide(); };
             progress.onchange = () => {
                 this.isDragging = false;
                 if(this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
             };
 
-            const opacitySlider = document.getElementById('cp-opacity-slider');
-            if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
+            const toggleBtn = document.getElementById('cp-toggle-ui-btn');
+            if (toggleBtn) {
+                toggleBtn.onclick = () => {
+                    this.container.classList.toggle('hide-peripherals');
+                    const isHidden = this.container.classList.contains('hide-peripherals');
+                    toggleBtn.innerHTML = isHidden ? '🔳' : '👁️'; 
+                    toggleBtn.style.opacity = isHidden ? '0.5' : '1.0';
+                };
+            }
+
+            const lyricsBtn = document.getElementById('cp-lyrics-toggle-btn');
+            const lyricsPanel = document.getElementById('cp-lyrics-panel');
+            const lyricsClose = document.getElementById('cp-lyrics-close');
+
+            if (lyricsBtn && lyricsPanel) {
+                lyricsBtn.onclick = () => {
+                    const isHidden = lyricsPanel.style.display === 'none';
+                    lyricsPanel.style.display = isHidden ? 'block' : 'none';
+                    lyricsBtn.style.background = isHidden ? '#3ea6ff' : 'transparent';
+                    lyricsBtn.style.color = isHidden ? 'black' : 'white';
+                    this.resetAutoHide();
+                };
+                if (lyricsClose) {
+                    lyricsClose.onclick = () => {
+                        lyricsPanel.style.display = 'none';
+                        lyricsBtn.style.background = 'transparent';
+                        lyricsBtn.style.color = 'white';
+                    };
+                }
+            }
 
             this.container.querySelectorAll('input[data-track]').forEach(input => {
+                input.onmousedown = () => { this.isDragging = true; };
+                input.onmouseup = () => { this.isDragging = false; };
                 input.oninput = (e) => {
+                    this.resetAutoHide();
                     const track = e.target.dataset.track;
                     const val = parseInt(e.target.value);
                     this.volumes[track] = val;
@@ -335,8 +401,13 @@
         }
 
         destroy() {
+            // 이벤트 제거
             document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
             document.removeEventListener('webkitfullscreenchange', this.handleFullscreenChange);
+            document.removeEventListener('mousemove', this.resetAutoHide);
+            document.removeEventListener('click', this.resetAutoHide);
+            document.removeEventListener('keydown', this.resetAutoHide);
+            if (this.hideTimer) clearTimeout(this.hideTimer);
 
             if (this.rafId) cancelAnimationFrame(this.rafId);
             this.stopAll();

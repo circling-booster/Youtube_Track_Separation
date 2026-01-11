@@ -1,6 +1,6 @@
 /**
  * YouTube Track Separation - Main Controller
- * 수정사항: 메타데이터 추출 연동 및 자동화 로직 정리
+ * 수정사항: 메타데이터 추출 연동 및 자동화 로직 정리, 자막 UI 바인딩 순서 수정
  */
 
 (function () {
@@ -121,7 +121,6 @@
     }
 
     startProcessLogic() {
-        // 메타데이터 및 소스 타입 식별 (extract_info.js)
         let meta = window.YoutubeMetaExtractor ? window.YoutubeMetaExtractor.getMusicInfo() : { sourceType: 'general' };
         this.processVideo(meta);
     }
@@ -170,18 +169,24 @@
         }
     }
 
-    handleComplete(data) {
+    async handleComplete(data) {
         this.isProcessing = false;
         document.getElementById('yt-sep-setup-panel')?.remove();
         
+        // 1. 자막 엔진 초기화 (오버레이 생성)
         this.initLyricsEngine(data.lyrics_lrc);
         
-        // 하이브리드 플레이어 로드
+        // 2. 플레이어 생성 및 초기화 (UI 생성)
         if (window.AiPlugsAudioPlayer) {
             this.player = new window.AiPlugsAudioPlayer(data.tracks, (currentTime) => {
                 if (this.lyricsEngine) this.lyricsEngine.update(currentTime);
             });
-            this.player.init();
+            await this.player.init(); // UI 생성 대기
+            
+            // 3. UI가 생성된 후 자막 엔진 바인딩
+            if (this.lyricsEngine) {
+                this.lyricsEngine.bindUI();
+            }
         }
     }
 
