@@ -1,23 +1,21 @@
 /**
- * YouTube Track Separator - Refactored Content Script
+ * YouTube Track Separation - Main Controller
  * Features:
- * - Robust Audio Hijacking (No Echo/Conflicts)
- * - Separate Lyrics Module Integration
- * - Socket.IO Communication
+ * - Coordinates Socket.IO, Audio Player, and Lyrics Overlay
+ * - Manages UI state and Auto-processing logic
  */
 
 (function () {
-  // ==========================================
-  // 1. Main Application Controller
-  // ==========================================
   class YouTubeTrackSeparator {
     constructor() {
       this.serverUrl = 'http://localhost:5010/';
       this.videoId = null;
       this.socket = null;
       this.isProcessing = false;
-      this.tracks = {};
-      this.customPlayer = null;
+      
+      // 모듈 인스턴스
+      this.player = null;
+      this.lyricsEngine = null;
 
       // 자동 처리 관련
       this.autoProcessTimer = null;
@@ -29,7 +27,7 @@
     }
 
     init() {
-      console.log('[App] Initializing Track Separator...');
+      console.log('[App] Initializing Track Separator Controller...');
       this.injectGlobalStyles();
       this.startUrlObserver();
     }
@@ -82,7 +80,6 @@
         this.cleanupPreviousVideo();
         this.videoId = newVideoId;
         
-        // 새 비디오 시작 시 자동 처리 타이머 가동
         this.isAutoProcessCancelled = false;
         this.startAutoProcessTimer();
       }
@@ -92,11 +89,17 @@
       if (this.autoProcessTimer) clearTimeout(this.autoProcessTimer);
       if (this.countdownInterval) clearInterval(this.countdownInterval);
       
-      if (this.customPlayer) {
-        this.customPlayer.destroy();
-        this.customPlayer = null;
+      // 모듈 정리
+      if (this.player) {
+        this.player.destroy();
+        this.player = null;
       }
       
+      // 가사 오버레이 DOM 제거
+      const overlay = document.getElementById('aiplugs-lyrics-overlay');
+      if (overlay) overlay.remove();
+      this.lyricsEngine = null;
+
       if (this.socket) {
         this.socket.disconnect();
         this.socket = null;
@@ -104,13 +107,9 @@
       
       this.hideCountdownUI();
       this.isProcessing = false;
-      
-      // 오버레이 제거
-      const overlay = document.getElementById('aiplugs-lyrics-overlay');
-      if (overlay) overlay.remove();
     }
 
-    // --- UI & Timer Logic ---
+    // --- Timer & UI Logic ---
 
     startAutoProcessTimer() {
       this.showCountdownUI();
@@ -148,8 +147,8 @@
         document.body.appendChild(el);
         
         document.getElementById('yt-sep-auto-now').onclick = () => {
-            this.cleanupPreviousVideo(); // 기존 타이머 클리어
-            this.videoId = new URLSearchParams(window.location.search).get('v'); // ID 재확인
+            this.cleanupPreviousVideo(); 
+            this.videoId = new URLSearchParams(window.location.search).get('v');
             this.startAutoProcess();
         };
         document.getElementById('yt-sep-auto-cancel').onclick = () => {
@@ -172,10 +171,9 @@
         if (el) el.textContent = `${this.autoProcessCountdown}초 후 자동 시작...`;
     }
 
-    // --- Core Process Logic ---
+    // --- Core Processing ---
 
     startAutoProcess() {
-        // 메타데이터 추출
         let meta = { sourceType: 'general' };
         if (window.YoutubeMetaExtractor) {
             meta = window.YoutubeMetaExtractor.getMusicInfo();
@@ -202,7 +200,7 @@
 
         this.socket.emit('process_video', {
             video_id: this.videoId,
-            model: 'htdemucs', // 기본 모델
+            model: 'htdemucs',
             meta: meta
         });
     }
@@ -221,42 +219,55 @@
 
     handleComplete(data) {
         console.log('[Complete]', data);
-        this.tracks = data.tracks;
         this.isProcessing = false;
         document.getElementById('yt-sep-setup-panel')?.remove();
         
-        this.launchCustomPlayer(data.lyrics_lrc);
+        this.launchModules(data.tracks, data.lyrics_lrc);
     }
 
-    launchCustomPlayer(lrcContent) {
-        if (this.customPlayer) this.customPlayer.destroy();
-        
-        // 가사 오버레이 컨테이너 생성
-        let overlay = document.getElementById('aiplugs-lyrics-overlay');
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.id = 'aiplugs-lyrics-overlay';
-            overlay.style.cssText = `
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                z-index: 2147483640; pointer-events: none; overflow: hidden;
-            `;
-            document.body.appendChild(overlay);
-        }
+    launchModules(tracks, lrcContent) {
+        // 1. 가사 모듈 초기화
+        this.initLyricsEngine(lrcContent);
 
-        // 분리된 파일(lyrics_overlay.js)의 엔진 사용
-        let lyricsEngine = null;
+        // 2. 플레이어 모듈 초기화 (가사 업데이트 콜백 주입)
+        if (window.AiPlugsAudioPlayer) {
+            this.player = new window.AiPlugsAudioPlayer(tracks, (currentTime) => {
+                if (this.lyricsEngine) {
+                    this.lyricsEngine.update(currentTime);
+                }
+            });
+            this.player.init();
+        } else {
+            console.error('Audio Player script not loaded!');
+        }
+    }
+
+    initLyricsEngine(lrcContent) {
         if (window.AiPlugsLyricsOverlay) {
-            lyricsEngine = new window.AiPlugsLyricsOverlay();
-            lyricsEngine.init(overlay);
+            // 가사 컨테이너 DOM 생성
+            let overlay = document.getElementById('aiplugs-lyrics-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'aiplugs-lyrics-overlay';
+                overlay.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                    z-index: 2147483640; pointer-events: none; overflow: hidden;
+                `;
+                document.body.appendChild(overlay);
+            }
+
+            this.lyricsEngine = new window.AiPlugsLyricsOverlay();
+            this.lyricsEngine.init(overlay);
+            
             if (lrcContent) {
-                lyricsEngine.parseLrc(lrcContent);
+                this.lyricsEngine.parseLrc(lrcContent);
+                console.log('Lyrics loaded into engine');
+            } else {
+                console.log('No lyrics available, engine idle');
             }
         } else {
-            console.error('Lyrics Engine script not loaded!');
+            console.warn('Lyrics Overlay script not loaded!');
         }
-
-        // Robust Player 실행
-        this.customPlayer = new CustomAudioPlayer(this.tracks, lyricsEngine);
     }
 
     tryAddButton() {
@@ -312,265 +323,8 @@
     }
   }
 
-  // ==========================================
-  // 2. Custom Audio Player (Robust Version)
-  // ==========================================
-  class CustomAudioPlayer {
-    constructor(tracks, lyricsEngine) {
-      this.tracks = tracks;
-      this.lyricsEngine = lyricsEngine;
-      
-      // AudioContext 초기화
-      const AudioContext = window.AudioContext || window.webkitAudioContext;
-      this.audioContext = new AudioContext();
-      
-      this.volumes = { vocal: 35, bass: 100, drum: 100, other: 100 };
-      this.audioBuffers = {};
-      this.activeSources = [];
-      
-      this._cachedVideo = null;
-      this.rafId = null;
-      this.isDragging = false;
-
-      // 바인딩
-      this.updateLoop = this.updateLoop.bind(this);
-      this.handleVideoEvent = this.handleVideoEvent.bind(this);
-
-      this.init();
-    }
-
-    get videoElement() {
-      // 기존 참조가 유효한지 확인
-      if (this._cachedVideo && this._cachedVideo.isConnected) {
-        return this._cachedVideo;
-      }
-      // 유튜브 메인 비디오 요소 찾기
-      const v = document.querySelector('video.html5-main-video') || document.querySelector('video');
-      if (v) {
-        console.log('[Player] Binding to video element');
-        this._cachedVideo = v;
-        this.attachListeners(v);
-        this.hijackAudio(v);
-      }
-      return v;
-    }
-
-    async init() {
-      this.createUI();
-      await this.loadAllTracks();
-      // 루프 시작
-      this.updateLoop();
-    }
-
-    async loadAllTracks() {
-      const statusEl = document.getElementById('cp-status');
-      if (statusEl) statusEl.textContent = '리소스 로딩 중...';
-      
-      const promises = Object.entries(this.tracks).map(async ([name, info]) => {
-        try {
-            // ngrok 헤더 이슈 방지용 옵션 추가
-            const res = await fetch(`http://localhost:5010${info.path}`, {
-                headers: { 'ngrok-skip-browser-warning': 'true' }
-            });
-            const buf = await res.arrayBuffer();
-            this.audioBuffers[name] = await this.audioContext.decodeAudioData(buf);
-        } catch (e) {
-            console.error(`Failed to load track ${name}:`, e);
-        }
-      });
-
-      await Promise.all(promises);
-      
-      if (statusEl) statusEl.textContent = 'Ready';
-      console.log('[Player] All tracks loaded');
-
-      // 이미 재생 중이면 싱크 맞춰 재생
-      if (this.videoElement && !this.videoElement.paused) {
-        this.playAudio(this.videoElement.currentTime);
-      }
-    }
-
-    hijackAudio(videoEl) {
-      if (!videoEl) return;
-      try {
-        if (!videoEl._isHijacked) {
-            // 원본 오디오를 Context로 가져오지만 destination에 연결하지 않음 (Mute 효과)
-            const source = this.audioContext.createMediaElementSource(videoEl);
-            // source.connect(this.audioContext.destination); // <-- 이 줄을 주석처리하여 원본 소리 차단
-            videoEl._isHijacked = true;
-            console.log('[Player] Original audio hijacked (muted)');
-        }
-      } catch (e) {
-        // 이미 연결된 경우 등 경고 무시
-        console.warn('[Player] Hijack warning:', e.message);
-      }
-    }
-
-    attachListeners(videoEl) {
-      // 기존 리스너 제거 (중복 방지)
-      const events = ['play', 'pause', 'waiting', 'playing', 'seeked'];
-      events.forEach(evt => videoEl.removeEventListener(evt, this.handleVideoEvent));
-      events.forEach(evt => videoEl.addEventListener(evt, this.handleVideoEvent));
-    }
-
-    handleVideoEvent(e) {
-      const v = e.target;
-      // 아직 트랙 로딩 전이면 무시
-      if (!this.audioBuffers['vocal']) return;
-
-      switch (e.type) {
-        case 'pause':
-        case 'waiting':
-          this.stopAudio();
-          break;
-        case 'play':
-        case 'playing':
-        case 'seeked':
-          if (!v.paused && v.readyState >= 3) {
-            // AudioContext가 중지상태면 재개
-            if (this.audioContext.state === 'suspended') this.audioContext.resume();
-            this.playAudio(v.currentTime);
-          }
-          break;
-      }
-      
-      // UI Play 버튼 상태 업데이트
-      const btn = document.getElementById('cp-play-btn');
-      if (btn) btn.innerHTML = v.paused ? '▶' : '⏸';
-    }
-
-    playAudio(startTime) {
-      // 기존 소스 정리
-      this.stopAudio();
-
-      Object.entries(this.audioBuffers).forEach(([name, buffer]) => {
-        const source = this.audioContext.createBufferSource();
-        source.buffer = buffer;
-        // 비디오 재생 속도 동기화
-        source.playbackRate.value = this.videoElement ? this.videoElement.playbackRate : 1.0;
-
-        const gainNode = this.audioContext.createGain();
-        gainNode.gain.value = this.volumes[name] / 100;
-
-        source.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-
-        // 시작 시간 지정
-        source.start(0, startTime);
-
-        this.activeSources.push({ source, gainNode, name });
-      });
-    }
-
-    stopAudio() {
-      this.activeSources.forEach(s => {
-        try { s.source.stop(); } catch(e) {}
-      });
-      this.activeSources = [];
-    }
-
-    updateLoop() {
-      const v = this.videoElement;
-      if (v) {
-        // 1. 가사 업데이트
-        if (this.lyricsEngine) {
-            this.lyricsEngine.update(v.currentTime);
-        }
-
-        // 2. UI 슬라이더 업데이트 (드래그 중 아닐 때만)
-        if (!this.isDragging) {
-            const total = v.duration || 1;
-            const pct = (v.currentTime / total) * 100;
-            const prog = document.getElementById('cp-progress');
-            if (prog) prog.value = pct;
-            
-            const currText = document.getElementById('cp-curr-time');
-            if(currText) currText.textContent = this.formatTime(v.currentTime);
-            const totalText = document.getElementById('cp-total-time');
-            if(totalText) totalText.textContent = this.formatTime(total);
-        }
-      }
-      this.rafId = requestAnimationFrame(this.updateLoop);
-    }
-
-    createUI() {
-      if (!window.YTSepUITemplates?.customPlayerHTML) return;
-      
-      const container = document.createElement('div');
-      container.id = 'yt-custom-player-ui';
-      container.className = 'yt-sep-ui';
-      // content_old.js의 스타일 차용
-      container.style.cssText = `
-        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-        width: 90%; max-width: 800px;
-        background: rgba(15, 15, 15, 0.95);
-        backdrop-filter: blur(10px);
-        border: 1px solid #444; border-radius: 16px; padding: 20px;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.6); z-index: 2147483647;
-        display: flex; flex-direction: column; gap: 15px;
-      `;
-      
-      container.innerHTML = window.YTSepUITemplates.customPlayerHTML([
-        'vocal', 'bass', 'drum', 'other'
-      ]);
-
-      document.body.appendChild(container);
-
-      // 이벤트 바인딩
-      document.getElementById('cp-close-btn').onclick = () => this.destroy();
-      document.getElementById('cp-play-btn').onclick = () => {
-        const v = this.videoElement;
-        if(v) v.paused ? v.play() : v.pause();
-      };
-
-      const progress = document.getElementById('cp-progress');
-      progress.oninput = () => this.isDragging = true;
-      progress.onchange = () => {
-        this.isDragging = false;
-        if(this.videoElement) {
-            this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
-        }
-      };
-
-      container.querySelectorAll('input[data-track]').forEach(input => {
-        input.oninput = (e) => {
-            const track = e.target.dataset.track;
-            const val = parseInt(e.target.value);
-            this.volumes[track] = val;
-            this.activeSources.forEach(s => {
-                if(s.name === track) s.gainNode.gain.value = val / 100;
-            });
-        };
-      });
-    }
-
-    formatTime(sec) {
-        if (!sec || isNaN(sec)) return '0:00';
-        const m = Math.floor(sec / 60);
-        const s = Math.floor(sec % 60);
-        return `${m}:${s.toString().padStart(2, '0')}`;
-    }
-
-    destroy() {
-      cancelAnimationFrame(this.rafId);
-      this.stopAudio();
-
-      if (this._cachedVideo && this._cachedVideo._isHijacked) {
-          // 플레이어 종료 시 원본 소리가 안 들릴 수 있으므로 안내
-          // (Context를 복구하는 것은 복잡하므로 보통 새로고침 유도 or Hijack 방식 변경)
-          // 여기서는 단순히 안내만 합니다.
-          console.log('[Player] Destroyed. Reload to restore original audio context completely.');
-      }
-
-      const ui = document.getElementById('yt-custom-player-ui');
-      if (ui) ui.remove();
-      
-      this._cachedVideo = null;
-    }
-  }
-
-  // 앱 시작 (페이지 로드 대기)
+  // 앱 시작
   setTimeout(() => {
     new YouTubeTrackSeparator();
-  }, 1000);
+  }, 3000);
 })();
