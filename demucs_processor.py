@@ -1,7 +1,6 @@
 """
-Demucs를 이용한 오디오 트랙 분리 (In-Process)
-- VRAM 안전성을 위해 외부에서 모델 로드/해제 관리
-- 수정: save_audio()의 잘못된 'mp3' 인자 제거
+Demucs를 이용한 오디오 트랙 분리 (Stateless)
+- 모델 생명주기를 외부(workflow)에서 제어하도록 수정
 """
 
 import logging
@@ -19,8 +18,13 @@ class DemucsProcessor:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     def load_model(self, name: str = 'htdemucs'):
-        """모델을 메모리에 로드하고 반환"""
+        """
+        모델을 메모리에 로드하고 반환 (Workflow에서 호출 후 사용 끝나면 해제 필수)
+        """
         logger.info(f"[Demucs] 모델 로드 중: {name} (Device: {self.device})")
+        # VRAM 확보를 위해 캐시 비우기
+        torch.cuda.empty_cache()
+        
         model = pretrained.get_model(name)
         model.to(self.device)
         return model
@@ -55,7 +59,6 @@ class DemucsProcessor:
             # 저장
             if progress_callback: progress_callback(60, '트랙 저장 중...')
             
-            # [수정됨] 'mp3': False 제거
             kwargs = {
                 'samplerate': model.samplerate,
                 'bitrate': 320,
@@ -67,7 +70,6 @@ class DemucsProcessor:
             track_names = model.sources
             for source, name in zip(sources, track_names):
                 stem = output_dir / f"{name}.wav"
-                # CPU로 이동 후 저장
                 save_audio(source.cpu(), str(stem), **kwargs)
 
             logger.info("[Demucs] 분리 완료")

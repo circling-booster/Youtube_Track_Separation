@@ -2,6 +2,7 @@
  * YouTube 메타데이터 및 소스 식별자 추출
  */
 function getMusicInfo() {
+  // Music Shelf 존재 여부로 공식 음원 판별
   const shelves = Array.from(document.querySelectorAll('ytd-horizontal-card-list-renderer'));
   const musicShelf = shelves.find(shelf => {
     const title = shelf.querySelector('#title');
@@ -9,7 +10,7 @@ function getMusicInfo() {
   });
 
   let info = {
-    sourceType: 'general', // 기본값
+    sourceType: 'general', // 기본값: 일반 영상
     title: null,
     artist: null,
     album: null
@@ -30,13 +31,13 @@ function getMusicInfo() {
     }
   }
 
-  // 일반 영상 타이틀 백업
+  // 일반 영상 타이틀 백업 (Fallback)
   if (!info.title) {
     const titleEl = document.querySelector('h1.title yt-formatted-string');
     if (titleEl) info.title = titleEl.textContent.trim();
   }
 
-  console.log('[ExtractInfo]', info);
+  console.log('[ExtractInfo] Meta:', info);
   return info;
 }
 
