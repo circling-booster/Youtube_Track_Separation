@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YouTube 트랙분리",
-  "version": "1.0.2",
-  "description": "유튜브 음악을 보컬, 베이스, 드럼, 기타로 분리하고 가사 싱크 제공",
+  "version": "1.0.3",
+  "description": "유튜브 음악을 보컬, 베이스, 드럼, 기타로 분리하고 가사 싱크 및 피치 조절 제공",
   "permissions": [
     "activeTab",
     "scripting",
@@ -31,7 +31,8 @@
         "extract_info.js",
         "lyrics_overlay.js",
         "track_player.js",
-        "content.js"
+        "content.js",
+        "/lib/rubberband-processor.js"
       ],
       "run_at": "document_end",
       "all_frames": false
@@ -40,7 +41,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "socket.io.js"
+        "socket.io.js",
+        "/lib/rubberband-processor.js"
       ],
       "matches": [
         "https://www.youtube.com/*"

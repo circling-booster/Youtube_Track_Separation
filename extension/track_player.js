@@ -1,8 +1,8 @@
 /**
- * Hybrid Track Player Engine
- * - 기본 (1.0배속): AudioBuffer 모드
- * - 배속 (변속): HTMLAudioElement 모드
- * - [New] 자동 숨김(Auto-Hide) 기능 추가
+ * Hybrid Track Player Engine V2.3 (Format Fixed)
+ * - Fixed: Message format for Rubberband AudioWorklet (Object -> Array)
+ * - Rubberband JS를 이용한 고품질 피치 시프팅
+ * - 드럼 트랙 바이패스 및 지연 보상(Latency Compensation) 포함
  */
 (function(root) {
     class AudioPlayer {
@@ -24,11 +24,21 @@
             this.container = null;
             this.minimizedIcon = null;
 
-            // Auto-Hide 관련
+            // UI 상태
             this.hideTimer = null;
             this.isHoveringUI = false;
-            this.isDragging = false; // 슬라이더 조작 상태
+            this.isDragging = false; 
             this.resetAutoHide = this.resetAutoHide.bind(this);
+
+            // 피치 & 싱크 관련
+            this.pitch = 1.0; 
+            this.pitchNode = null;        // Rubberband AudioWorkletNode
+            this.pitchGroupInput = null;  // 피치 적용 그룹 (Vocal+Bass+Other)
+            this.drumDelayNode = null;    // 드럼 싱크 보정용
+            this.isRubberbandReady = false;
+            
+            // Rubberband Latency 보정값 (초 단위, 약 50~100ms)
+            this.baseLatency = 0.05; 
 
             this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
             this.updateLoop = this.updateLoop.bind(this);
@@ -48,40 +58,101 @@
 
         async init() {
             this.createUI();
-            this.setupAutoHide(); // 자동 숨김 로직 초기화
+            this.setupAutoHide();
             this.attachFullscreenListener();
+            
+            // 1. Rubberband Worklet 로드
+            await this.initPitchShifter();
+            
+            // 2. 오디오 트랙 다운로드 및 디코딩
             await this.loadAllTracks();
+            
+            // 3. 루프 시작
             this.updateLoop();
         }
 
-        // [New] 자동 숨김 설정
+        async initPitchShifter() {
+            try {
+                // manifest.json에 등록된 경로 사용
+                const workletUrl = chrome.runtime.getURL('/lib/rubberband-processor.js');
+                
+                // AudioWorklet 모듈 추가
+                await this.audioContext.audioWorklet.addModule(workletUrl);
+                
+                // 노드 생성 ('rubberband-processor'는 라이브러리 내부 등록 이름)
+                this.pitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor');
+                
+                // 에러 핸들링
+                this.pitchNode.onprocessorerror = (err) => {
+                    console.error('[Player] Rubberband Worklet Error:', err);
+                };
+
+                // 피치 그룹 (Vocal, Bass, Other가 여기로 모임 -> 피치 변경됨)
+                this.pitchGroupInput = this.audioContext.createGain();
+                this.pitchGroupInput.connect(this.pitchNode);
+                this.pitchNode.connect(this.audioContext.destination);
+
+                // 드럼 싱크용 딜레이 (최대 1초 버퍼)
+                this.drumDelayNode = this.audioContext.createDelay(1.0);
+                this.drumDelayNode.delayTime.value = 0; // 초기값 (피치 1.0일 때 0)
+                this.drumDelayNode.connect(this.audioContext.destination);
+
+                this.isRubberbandReady = true;
+                console.log('[Player] Rubberband AudioWorklet loaded successfully');
+
+                // 초기 설정 (피치 1.0)
+                this.updatePitch(0);
+
+            } catch (e) {
+                console.warn('[Player] Rubberband load failed. Pitch shifting will be disabled.', e);
+                this.isRubberbandReady = false;
+            }
+        }
+
+        // 피치 업데이트 (semitones: -5 ~ 5)
+        updatePitch(semitones) {
+            if (!this.isRubberbandReady || !this.pitchNode) return;
+
+            // 1. 피치 비율 계산 (2^(n/12))
+            const ratio = Math.pow(2, semitones / 12.0);
+            this.pitch = ratio;
+
+            // 2. 메시지 전송 (★수정됨: 배열 포맷 ["pitch", value] 사용★)
+            // rubberband-processor.js 내부: var g=JSON.parse(I.data), C=g[0], Q=g[1];
+            const payload = ["pitch", ratio];
+            
+            try {
+                this.pitchNode.port.postMessage(JSON.stringify(payload));
+            } catch (e) {
+                console.error('[Player] Failed to send pitch command:', e);
+            }
+
+            // 3. 드럼 딜레이 보정 (Latency Compensation)
+            // 피치 변환이 켜지면(0이 아니면) Rubberband 내부 버퍼링으로 인한 지연이 발생하므로
+            // 바이패스되는 드럼 트랙에도 동일한 지연을 줍니다.
+            if (semitones !== 0) {
+                this.drumDelayNode.delayTime.value = this.baseLatency; 
+            } else {
+                this.drumDelayNode.delayTime.value = 0; 
+            }
+        }
+
         setupAutoHide() {
-            // UI 영역 호버 감지
             if (this.container) {
                 this.container.addEventListener('mouseenter', () => { this.isHoveringUI = true; this.resetAutoHide(); });
                 this.container.addEventListener('mouseleave', () => { this.isHoveringUI = false; this.resetAutoHide(); });
             }
-
-            // 전역 활동 감지
             document.addEventListener('mousemove', this.resetAutoHide);
             document.addEventListener('click', this.resetAutoHide);
             document.addEventListener('keydown', this.resetAutoHide);
-
             this.resetAutoHide();
         }
 
-        // [New] 타이머 리셋
         resetAutoHide() {
             if (!this.container) return;
-
-            // UI 표시 (idle 클래스 제거)
             this.container.classList.remove('ui-idle');
-
             if (this.hideTimer) clearTimeout(this.hideTimer);
-
-            // 3초 후 숨김 시도
             this.hideTimer = setTimeout(() => {
-                // 마우스가 UI 위에 있거나 슬라이더 드래그 중이면 숨기지 않음
                 if (!this.isHoveringUI && !this.isDragging) {
                     this.container.classList.add('ui-idle');
                 }
@@ -96,7 +167,6 @@
         handleFullscreenChange() {
             if (!this.container) return;
             const isFullscreen = !!document.fullscreenElement || !!document.webkitFullscreenElement;
-            
             if (isFullscreen) {
                 this.container.classList.add('fs-mode');
             } else {
@@ -107,7 +177,7 @@
 
         async loadAllTracks() {
             const statusEl = document.getElementById('cp-status');
-            if (statusEl) statusEl.textContent = '리소스 로딩 중...';
+            if (statusEl) statusEl.textContent = '트랙 로딩 중...';
             
             const promises = Object.entries(this.tracks).map(async ([name, info]) => {
                 try {
@@ -115,18 +185,19 @@
                         headers: { 'ngrok-skip-browser-warning': 'true' }
                     });
                     const blob = await res.blob();
-                    
                     const arrayBuffer = await blob.arrayBuffer();
                     const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
 
+                    // HTMLAudioElement 생성 (1.0배속 아닐 때 및 폴백용)
                     const blobUrl = URL.createObjectURL(blob);
                     const audioEl = new Audio(blobUrl);
-                    audioEl.preservesPitch = true;
+                    audioEl.preservesPitch = true; 
                     audioEl.crossOrigin = "anonymous";
                     
                     const elSource = this.audioContext.createMediaElementSource(audioEl);
                     const elGain = this.audioContext.createGain();
                     elSource.connect(elGain);
+                    // Element 모드는 기본적으로 Destination으로 바로 연결 (피치 조절 불가)
                     elGain.connect(this.audioContext.destination);
                     elGain.gain.value = 0; 
 
@@ -192,7 +263,10 @@
 
         checkModeAndPlay(v, forceRestart = false) {
             const rate = v.playbackRate;
-            const newMode = (rate === 1.0) ? 'buffer' : 'element';
+            // 1.0배속일 때만 Buffer 모드(피치 조절 가능) 사용
+            const isNormalSpeed = (rate === 1.0);
+            const newMode = isNormalSpeed ? 'buffer' : 'element';
+            
             const modeChanged = (this.mode !== newMode);
 
             if (forceRestart || modeChanged) {
@@ -203,6 +277,7 @@
             if (this.mode === 'buffer') {
                 this.playBufferMode(v.currentTime);
             } else {
+                // 배속 재생 시에는 피치 조절 기능을 끕니다 (Element 모드 사용)
                 this.playElementMode(v.currentTime, rate);
             }
         }
@@ -218,13 +293,26 @@
                 gain.gain.value = this.volumes[name] / 100;
                 
                 source.connect(gain);
-                gain.connect(this.audioContext.destination);
+
+                // *** 오디오 라우팅 핵심 ***
+                if (this.isRubberbandReady) {
+                    if (name === 'drum') {
+                        // 드럼: Rubberband 우회 -> DelayNode (싱크 보정)
+                        gain.connect(this.drumDelayNode); 
+                    } else {
+                        // 보컬, 베이스, 기타: Pitch Group -> Rubberband Worklet
+                        gain.connect(this.pitchGroupInput);
+                    }
+                } else {
+                    // Rubberband 실패 시 직결
+                    gain.connect(this.audioContext.destination);
+                }
                 
                 source.start(0, startTime);
                 
                 this.activeSourceNodes.push({ source, gain, name });
                 
-                res.element.pause();
+                res.element.pause(); // HTML5 오디오는 중지
             });
         }
 
@@ -257,7 +345,6 @@
             const v = this.videoElement;
             if (v) {
                 this.onTimeUpdate(v.currentTime);
-                
                 if (this.mode === 'element' && !v.paused) {
                     Object.values(this.resources).forEach(res => {
                         if (Math.abs(res.element.currentTime - v.currentTime) > 0.3) {
@@ -265,7 +352,6 @@
                         }
                     });
                 }
-
                 if (!this.isDragging) {
                     const total = v.duration || 1;
                     const pct = (v.currentTime / total) * 100;
@@ -290,10 +376,7 @@
                 this.container.className = 'yt-sep-ui';
                 this.container.innerHTML = window.YTSepUITemplates.customPlayerHTML(['vocal', 'bass', 'drum', 'other']);
                 document.body.appendChild(this.container);
-                
-                if (document.fullscreenElement) {
-                    this.container.classList.add('fs-mode');
-                }
+                if (document.fullscreenElement) this.container.classList.add('fs-mode');
             }
 
             this.createMinimizedIcon();
@@ -309,6 +392,18 @@
             const opacitySlider = document.getElementById('cp-opacity-slider');
             if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
             
+            // [NEW] Pitch Slider Binding
+            const pitchSlider = document.getElementById('cp-pitch-slider');
+            const pitchVal = document.getElementById('cp-pitch-val');
+            if (pitchSlider) {
+                pitchSlider.oninput = (e) => {
+                    this.resetAutoHide();
+                    const semitones = parseInt(e.target.value);
+                    pitchVal.textContent = semitones > 0 ? `+${semitones}` : semitones;
+                    this.updatePitch(semitones);
+                };
+            }
+
             const progress = document.getElementById('cp-progress');
             progress.onmousedown = () => { this.isDragging = true; this.resetAutoHide(); };
             progress.onmouseup = () => { this.isDragging = false; this.resetAutoHide(); };
@@ -317,7 +412,7 @@
                 this.isDragging = false;
                 if(this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
             };
-
+            
             const toggleBtn = document.getElementById('cp-toggle-ui-btn');
             if (toggleBtn) {
                 toggleBtn.onclick = () => {
@@ -328,27 +423,7 @@
                 };
             }
 
-            const lyricsBtn = document.getElementById('cp-lyrics-toggle-btn');
-            const lyricsPanel = document.getElementById('cp-lyrics-panel');
-            const lyricsClose = document.getElementById('cp-lyrics-close');
-
-            if (lyricsBtn && lyricsPanel) {
-                lyricsBtn.onclick = () => {
-                    const isHidden = lyricsPanel.style.display === 'none';
-                    lyricsPanel.style.display = isHidden ? 'block' : 'none';
-                    lyricsBtn.style.background = isHidden ? '#3ea6ff' : 'transparent';
-                    lyricsBtn.style.color = isHidden ? 'black' : 'white';
-                    this.resetAutoHide();
-                };
-                if (lyricsClose) {
-                    lyricsClose.onclick = () => {
-                        lyricsPanel.style.display = 'none';
-                        lyricsBtn.style.background = 'transparent';
-                        lyricsBtn.style.color = 'white';
-                    };
-                }
-            }
-
+            // Volume Binding
             this.container.querySelectorAll('input[data-track]').forEach(input => {
                 input.onmousedown = () => { this.isDragging = true; };
                 input.onmouseup = () => { this.isDragging = false; };
@@ -363,7 +438,6 @@
                             node.gain.gain.value = val / 100;
                         }
                     });
-
                     if (this.resources[track]) {
                         this.resources[track].elementGain.gain.value = val / 100;
                     }
@@ -401,7 +475,6 @@
         }
 
         destroy() {
-            // 이벤트 제거
             document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
             document.removeEventListener('webkitfullscreenchange', this.handleFullscreenChange);
             document.removeEventListener('mousemove', this.resetAutoHide);
@@ -420,6 +493,12 @@
             if (this.audioContext) this.audioContext.close();
             if (this.container) this.container.remove();
             if (this.minimizedIcon) this.minimizedIcon.remove();
+            
+            // ScriptProcessor 해제
+            if (this.pitchNode) {
+                this.pitchNode.disconnect();
+                // AudioWorkletNode는 명시적 destroy 없음, 연결 해제로 충분
+            }
             
             this._cachedVideo = null;
         }
