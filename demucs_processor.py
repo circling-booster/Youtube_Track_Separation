@@ -1,127 +1,89 @@
 """
-Demucs를 이용한 오디오 트랙 분리
-- 외부 모델 주입 방식
-- 메모리 안전성 최적화
+Demucs를 이용한 오디오 트랙 분리 (In-Process)
+- VRAM 안전성을 위해 외부에서 모델 로드/해제 관리
+- 수정: save_audio()의 잘못된 'mp3' 인자 제거
 """
 
-import subprocess
 import logging
-import torch
-import os
 from pathlib import Path
-from typing import Callable, Optional
+import torch
+from demucs import pretrained
+from demucs.apply import apply_model
+from demucs.audio import AudioFile, save_audio
 
 logger = logging.getLogger(__name__)
 
 class DemucsProcessor:
-    """DEMUCS를 이용한 오디오 분리"""
-
-    MODELS = {
-        'htdemucs': 'facebook/demucs-htdemucs',
-        'htdemucs_ft': 'facebook/demucs-htdemucs_ft'
-    }
-
-    def __init__(self, download_dir):
+    def __init__(self, download_dir: str):
         self.download_dir = Path(download_dir)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        # 생성 시에는 시스템 체크만 수행 (모델 로드 X)
-        self._check_demucs()
 
-    def _check_demucs(self):
-        try:
-            subprocess.run(['demucs', '--help'], capture_output=True, timeout=10)
-        except Exception:
-            logger.warning("⚠ DEMUCS를 설치해야 합니다: pip install demucs")
+    def load_model(self, name: str = 'htdemucs'):
+        """모델을 메모리에 로드하고 반환"""
+        logger.info(f"[Demucs] 모델 로드 중: {name} (Device: {self.device})")
+        model = pretrained.get_model(name)
+        model.to(self.device)
+        return model
 
-    def process_and_stream(
+    def process_with_model(
         self,
+        model,
         input_file: Path,
         output_dir: Path,
-        model: str = 'htdemucs',
-        progress_callback: Optional[Callable] = None
+        progress_callback=None
     ) -> bool:
         """
-        오디오 파일을 분리 (Subprocess 실행으로 메모리 격리 효과)
+        외부에서 주입된 모델 객체를 사용하여 분리 수행
         """
-        input_file = Path(input_file)
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        if model not in self.MODELS:
-            model = 'htdemucs'
-
-        logger.info(f"[분리] 시작: {input_file.name} (Model: {model})")
-
-        if progress_callback:
-            progress_callback(10, 'AI 모델 로딩 중...')
-
         try:
-            env = os.environ.copy()
-            env['PYTHONIOENCODING'] = 'utf-8'
+            input_file = Path(input_file)
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Demucs는 별도 프로세스로 실행하여 메인 프로세스 메모리 보호
-            cmd = [
-                'demucs',
-                '-n', model,
-                '-d', self.device,
-                '-o', str(output_dir),
-                str(input_file)
-            ]
+            logger.info(f"[Demucs] 분리 시작: {input_file.name}")
+            
+            # 오디오 로드
+            wav = AudioFile(input_file).read(streams=0, samplerate=model.samplerate, channels=model.audio_channels)
+            ref = wav.mean(0)
+            wav = (wav - ref.mean()) / ref.std()
+            wav = wav.to(self.device)
+            
+            # 분리 수행 (shifts=1로 속도 최적화)
+            sources = apply_model(model, wav[None], device=self.device, shifts=1, split=True, overlap=0.25, progress=True)[0]
+            sources = sources * ref.std() + ref.mean()
 
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                env=env
-            )
+            # 저장
+            if progress_callback: progress_callback(60, '트랙 저장 중...')
+            
+            # [수정됨] 'mp3': False 제거
+            kwargs = {
+                'samplerate': model.samplerate,
+                'bitrate': 320,
+                'clip': 'rescale',
+                'as_float': False,
+                'bits_per_sample': 16
+            }
+            
+            track_names = model.sources
+            for source, name in zip(sources, track_names):
+                stem = output_dir / f"{name}.wav"
+                # CPU로 이동 후 저장
+                save_audio(source.cpu(), str(stem), **kwargs)
 
-            stdout, stderr = process.communicate(timeout=1800) # 30분 타임아웃
-
-            if process.returncode != 0:
-                logger.error(f"[분리] 실패: {stderr}")
-                return False
-
-            if progress_callback:
-                progress_callback(90, '트랙 분리 완료')
-
-            # 결과 확인
-            return self._verify_output(output_dir, model)
-
-        except subprocess.TimeoutExpired:
-            process.kill()
-            logger.error("[분리] 타임아웃")
-            return False
-        except Exception as e:
-            logger.error(f"[분리] 오류: {e}")
-            return False
-
-    def _verify_output(self, output_dir: Path, model_name: str) -> bool:
-        """분리된 파일이 실제로 존재하는지 확인"""
-        # Demucs 구조: output_dir / model_name / input_filename / instruments.wav
-        # 여기서는 간단히 wav 파일 존재 여부만 체크
-        for item in output_dir.rglob('*.wav'):
+            logger.info("[Demucs] 분리 완료")
             return True
-        return False
+
+        except Exception as e:
+            logger.error(f"[Demucs] 오류: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
 
     def get_separated_tracks(self, output_dir_str: str) -> dict:
-        """분리된 트랙 경로 조회"""
+        """분리된 트랙 파일 확인"""
         output_dir = Path(output_dir_str)
         results = {}
         
-        # Demucs 출력 구조 탐색
-        target_dir = None
-        for item in output_dir.rglob('vocal*'): # vocal 파일이 있는 폴더 찾기
-            if item.parent.is_dir():
-                target_dir = item.parent
-                break
-        
-        if not target_dir:
-            return {}
-
         track_mapping = {
             'vocals.wav': 'vocal',
             'bass.wav': 'bass',
@@ -130,7 +92,7 @@ class DemucsProcessor:
         }
 
         for wav_name, track_name in track_mapping.items():
-            wav_path = target_dir / wav_name
+            wav_path = output_dir / wav_name
             if wav_path.exists():
                 results[track_name] = {
                     'path': str(wav_path),

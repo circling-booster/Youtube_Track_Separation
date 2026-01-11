@@ -5,7 +5,7 @@ function getMusicInfo() {
   const shelves = Array.from(document.querySelectorAll('ytd-horizontal-card-list-renderer'));
   const musicShelf = shelves.find(shelf => {
     const title = shelf.querySelector('#title');
-    return title && title.textContent.trim() === '음악'; // 언어별 대응 필요시 'Music' 추가
+    return title && (title.textContent.trim() === '음악' || title.textContent.trim() === 'Music');
   });
 
   let info = {

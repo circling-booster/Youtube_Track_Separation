@@ -1,14 +1,10 @@
 /**
  * Track Player Engine
  * 역할: Web Audio API 관리, 비디오 싱크 동기화, 볼륨 믹싱
- * 의존성: 없음 (가사 로직과 완전 분리)
+ * 수정: SPA 네비게이션 시 이벤트 리스너 해제 및 AudioContext 종료 로직 강화
  */
 (function(root) {
     class AudioPlayer {
-        /**
-         * @param {Object} tracks - { vocal: {path:..}, drum: {path:..}, ... }
-         * @param {Function} onTimeUpdate - 매 프레임마다 호출될 콜백 (currentTime) => void
-         */
         constructor(tracks, onTimeUpdate) {
             this.tracks = tracks;
             this.onTimeUpdate = onTimeUpdate || (() => {});
@@ -25,11 +21,10 @@
             this.rafId = null;
             this.isDragging = false;
             
-            // UI 상태 관리
             this.container = null;
             this.minimizedIcon = null;
 
-            // 바인딩
+            // 바인딩 (removeEventListener를 위해 참조 유지 필수)
             this.updateLoop = this.updateLoop.bind(this);
             this.handleVideoEvent = this.handleVideoEvent.bind(this);
         }
@@ -38,7 +33,6 @@
             if (this._cachedVideo && this._cachedVideo.isConnected) {
                 return this._cachedVideo;
             }
-            // YouTube 메인 비디오 요소 찾기
             const v = document.querySelector('video.html5-main-video') || document.querySelector('video');
             if (v) {
                 console.log('[Player] Binding to video element');
@@ -61,7 +55,6 @@
             
             const promises = Object.entries(this.tracks).map(async ([name, info]) => {
                 try {
-                    // ngrok 헤더 이슈 방지용 옵션
                     const res = await fetch(`http://localhost:5010${info.path}`, {
                         headers: { 'ngrok-skip-browser-warning': 'true' }
                     });
@@ -77,7 +70,6 @@
             if (statusEl) statusEl.textContent = 'Ready';
             console.log('[Player] All tracks loaded');
 
-            // 이미 재생 중이면 싱크 맞춰 재생
             if (this.videoElement && !this.videoElement.paused) {
                 this.playAudio(this.videoElement.currentTime);
             }
@@ -87,25 +79,34 @@
             if (!videoEl) return;
             try {
                 if (!videoEl._isHijacked) {
-                    // 원본 오디오를 Context로 가져오되 destination에 연결하지 않음 (Mute 효과)
                     const source = this.audioContext.createMediaElementSource(videoEl);
                     videoEl._isHijacked = true;
                     console.log('[Player] Original audio hijacked (muted)');
                 }
             } catch (e) {
-                console.warn('[Player] Hijack warning:', e.message);
+                // 이미 연결된 경우 등
             }
         }
 
         attachListeners(videoEl) {
+            // 안전을 위해 먼저 제거 후 추가
+            this.removeListeners(videoEl);
+            const events = ['play', 'pause', 'waiting', 'playing', 'seeked'];
+            events.forEach(evt => videoEl.addEventListener(evt, this.handleVideoEvent));
+        }
+
+        removeListeners(videoEl) {
+            if (!videoEl) return;
             const events = ['play', 'pause', 'waiting', 'playing', 'seeked'];
             events.forEach(evt => videoEl.removeEventListener(evt, this.handleVideoEvent));
-            events.forEach(evt => videoEl.addEventListener(evt, this.handleVideoEvent));
         }
 
         handleVideoEvent(e) {
             const v = e.target;
             if (!this.audioBuffers['vocal']) return;
+
+            // AudioContext가 닫혀있으면 무시 (이전 인스턴스 방지)
+            if (this.audioContext.state === 'closed') return;
 
             switch (e.type) {
                 case 'pause':
@@ -122,13 +123,13 @@
                     break;
             }
             
-            // UI Play 버튼 상태 업데이트
             const btn = document.getElementById('cp-play-btn');
             if (btn) btn.innerHTML = v.paused ? '▶' : '⏸';
         }
 
         playAudio(startTime) {
             this.stopAudio();
+            if (this.audioContext.state === 'closed') return;
 
             Object.entries(this.audioBuffers).forEach(([name, buffer]) => {
                 const source = this.audioContext.createBufferSource();
@@ -154,12 +155,12 @@
         }
 
         updateLoop() {
+            if (this.audioContext.state === 'closed') return;
+
             const v = this.videoElement;
             if (v) {
-                // 1. 외부 콜백 실행 (가사 싱크 등)
                 this.onTimeUpdate(v.currentTime);
 
-                // 2. UI 슬라이더 업데이트 (드래그 중 아닐 때만)
                 if (!this.isDragging) {
                     const total = v.duration || 1;
                     const pct = (v.currentTime / total) * 100;
@@ -178,7 +179,6 @@
         createUI() {
             if (!window.YTSepUITemplates?.customPlayerHTML) return;
             
-            // 메인 플레이어 컨테이너 생성
             this.container = document.createElement('div');
             this.container.id = 'yt-custom-player-ui';
             this.container.className = 'yt-sep-ui';
@@ -198,31 +198,22 @@
             ]);
 
             document.body.appendChild(this.container);
-
-            // 최소화된 아이콘 생성 (숨김 상태로 시작)
             this.createMinimizedIcon();
 
-            // --- 이벤트 바인딩 ---
-
-            // 1. 닫기 버튼 (완전 종료)
+            // Event Bindings
             document.getElementById('cp-close-btn').onclick = () => this.destroy();
-
-            // 2. 최소화 버튼
             document.getElementById('cp-minimize-btn').onclick = () => this.toggleMinimize(true);
-
-            // 3. 투명도 슬라이더
+            
             const opacitySlider = document.getElementById('cp-opacity-slider');
-            opacitySlider.oninput = (e) => {
-                this.container.style.opacity = e.target.value;
-            };
+            if(opacitySlider) {
+                opacitySlider.oninput = (e) => { this.container.style.opacity = e.target.value; };
+            }
 
-            // 4. 재생/일시정지
             document.getElementById('cp-play-btn').onclick = () => {
                 const v = this.videoElement;
                 if(v) v.paused ? v.play() : v.pause();
             };
 
-            // 5. 진행바 (Seek)
             const progress = document.getElementById('cp-progress');
             progress.oninput = () => this.isDragging = true;
             progress.onchange = () => {
@@ -232,7 +223,6 @@
                 }
             };
 
-            // 6. 볼륨 슬라이더
             this.container.querySelectorAll('input[data-track]').forEach(input => {
                 input.oninput = (e) => {
                     const track = e.target.dataset.track;
@@ -286,13 +276,25 @@
         }
 
         destroy() {
-            cancelAnimationFrame(this.rafId);
+            console.log('[Player] Destroying instance...');
+            
+            // 1. 애니메이션 루프 중단
+            if (this.rafId) cancelAnimationFrame(this.rafId);
+            
+            // 2. 오디오 소스 정지
             this.stopAudio();
-            if (this._cachedVideo && this._cachedVideo._isHijacked) {
-                console.log('[Player] Destroyed. Reload to restore original audio context.');
+            
+            // 3. AudioContext 종료 (가장 중요)
+            if (this.audioContext) {
+                this.audioContext.close();
+            }
+
+            // 4. 이벤트 리스너 제거
+            if (this._cachedVideo) {
+                this.removeListeners(this._cachedVideo);
             }
             
-            // UI 요소 제거
+            // 5. UI 제거
             if (this.container) this.container.remove();
             if (this.minimizedIcon) this.minimizedIcon.remove();
             
@@ -300,7 +302,6 @@
         }
     }
 
-    // 전역 노출
     root.AiPlugsAudioPlayer = AudioPlayer;
 
 })(typeof window !== 'undefined' ? window : globalThis);

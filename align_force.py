@@ -31,7 +31,7 @@ def align_lyrics(audio_path: str, text: str, device: str = 'cuda', language: str
         # 1. 텍스트 전처리
         text = text.replace("(", "").replace(")", "").replace(",", "")
         
-        # 2. 모델 로드 (함수 내 로컬 로드 -> 종료 시 해제)
+        # 2. 모델 로드 (함수 내 로컬 로드 -> 종료 시 해제 보장)
         model = stable_whisper.load_model('medium', device=device)
         
         # 3. 정렬 수행
@@ -58,6 +58,7 @@ def align_lyrics(audio_path: str, text: str, device: str = 'cuda', language: str
     
     finally:
         # 5. 메모리 명시적 해제
-        if model: del model
+        if model: 
+            del model
         gc.collect()
         torch.cuda.empty_cache()
