@@ -74,7 +74,7 @@
         async initPitchShifter() {
             try {
                 // manifest.json에 등록된 경로 사용
-                const workletUrl = chrome.runtime.getURL('/lib/rubberband-processor.js');
+                const workletUrl = chrome.runtime.getURL('rubberband-processor.js');
                 
                 // AudioWorklet 모듈 추가
                 await this.audioContext.audioWorklet.addModule(workletUrl);

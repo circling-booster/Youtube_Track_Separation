@@ -32,7 +32,7 @@
         "lyrics_overlay.js",
         "track_player.js",
         "content.js",
-        "/lib/rubberband-processor.js"
+        "rubberband-processor.js"
       ],
       "run_at": "document_end",
       "all_frames": false
@@ -42,7 +42,7 @@
     {
       "resources": [
         "socket.io.js",
-        "/lib/rubberband-processor.js"
+        "rubberband-processor.js"
       ],
       "matches": [
         "https://www.youtube.com/*"
