@@ -1,68 +1,4 @@
 /**
- * YouTube 메타데이터 및 소스 유형 추출
- * - Official: '음악' 섹션이 있는 공식 음원 (가사 크롤링 시도)
- * - General: 일반 영상 (자막 다운로드 시도)
- */
-
-function getMusicInfo() {
-  // "음악" 선반(Shelf) 존재 여부 확인
-  const shelves = Array.from(
-    document.querySelectorAll('ytd-horizontal-card-list-renderer')
-  );
-
-  const musicShelf = shelves.find(shelf => {
-    const titleEl = shelf.querySelector('ytd-rich-list-header-renderer #title');
-    return titleEl && titleEl.textContent.trim() === '음악';
-  });
-
-  let sourceType = 'general';
-  let artist = null;
-  let title = null;
-  let album = null;
-
-  if (musicShelf) {
-    // 공식 음원: 메타데이터 상세 추출
-    sourceType = 'official';
-    const card = musicShelf.querySelector('yt-video-attribute-view-model');
-
-    if (card) {
-      const titleEl = card.querySelector('.yt-video-attribute-view-model__title');
-      const artistEl = card.querySelector('.yt-video-attribute-view-model__subtitle span');
-      const albumEl = card.querySelector('.yt-video-attribute-view-model__secondary-subtitle a');
-
-      title = titleEl ? titleEl.textContent.trim() : null;
-      artist = artistEl ? artistEl.textContent.trim() : null;
-      album = albumEl ? albumEl.textContent.trim() : null;
-    }
-  }
-
-  // 일반 영상: 영상 제목을 title로 사용
-  if (sourceType === 'general' || !title) {
-    const titleElement = document.querySelector('h1.title yt-formatted-string');
-    if (titleElement) {
-      title = titleElement.textContent.trim();
-    }
-  }
-
-  console.log(`[ExtractInfo] Source: ${sourceType}, Title: ${title}, Artist: ${artist}`);
-
-  return {
-    sourceType: sourceType,
-    artist: artist,
-    title: title,
-    album: album
-  };
-}
-
-// 모듈 내보내기 (확장 프로그램 환경 고려)
-if (typeof module !== 'undefined') {
-  module.exports = { getMusicInfo };
-} else {
-  // 전역 스코프에 주입
-  window.YoutubeMetaExtractor = { getMusicInfo };
-}
-
-/**
  * YouTube Track Separator - Integrated Client
  * 포함 기능: 자동 처리 타이머, 소켓 통신, 커스텀 플레이어, 가사 엔진(LyricsEngine)
  */
@@ -141,7 +77,7 @@ if (typeof module !== 'undefined') {
       });
 
       rawLyrics.sort((a, b) => a.time - b.time);
-      
+
       // 종료 시간 보정
       for (let i = 0; i < rawLyrics.length; i++) {
         if (rawLyrics[i].endTime === null) {
@@ -161,7 +97,7 @@ if (typeof module !== 'undefined') {
     calculateGaps() {
       for (let i = 0; i < this.lyrics.length; i++) {
         this.lyrics[i].needsCountdown = false;
-        let gap = (i === 0) ? this.lyrics[i].time : (this.lyrics[i].time - this.lyrics[i-1].endTime);
+        let gap = (i === 0) ? this.lyrics[i].time : (this.lyrics[i].time - this.lyrics[i - 1].endTime);
         if (gap >= this.config.gapThreshold) this.lyrics[i].needsCountdown = true;
       }
     }
@@ -184,7 +120,7 @@ if (typeof module !== 'undefined') {
     update(currentTime) {
       if (!this.lyrics.length) return;
       const time = currentTime + this.config.syncOffset;
-      
+
       // 현재 인덱스 찾기
       let idx = -1;
       for (let i = 0; i < this.lyrics.length; i++) {
@@ -199,7 +135,7 @@ if (typeof module !== 'undefined') {
       // 스타일 업데이트
       this.domLines.forEach((div, i) => {
         div.classList.remove('active', 'near', 'show-cnt');
-        
+
         // 카운트다운
         if (i > idx && this.lyrics[i].needsCountdown) {
           const remain = this.lyrics[i].time - time;
@@ -302,7 +238,7 @@ if (typeof module !== 'undefined') {
         this.customPlayer.destroy();
         this.customPlayer = null;
       }
-      
+
       // 오버레이 제거
       const overlay = document.getElementById('aiplugs-lyrics-overlay');
       if (overlay) overlay.remove();
@@ -400,10 +336,10 @@ if (typeof module !== 'undefined') {
         });
       }
 
-      this.socket.emit('process_video', { 
-        video_id: this.videoId, 
+      this.socket.emit('process_video', {
+        video_id: this.videoId,
         model: 'htdemucs',
-        meta: meta 
+        meta: meta
       });
     }
 
@@ -421,14 +357,14 @@ if (typeof module !== 'undefined') {
       this.tracks = data.tracks;
       this.isProcessing = false;
       document.getElementById('yt-sep-setup-panel')?.remove();
-      
+
       // 플레이어 및 가사 엔진 시작
       this.launchCustomPlayer(data.lyrics_lrc);
     }
 
     launchCustomPlayer(lrcContent) {
       if (this.customPlayer) this.customPlayer.destroy();
-      
+
       // 가사 오버레이 생성
       let overlay = document.getElementById('aiplugs-lyrics-overlay');
       if (!overlay) {
@@ -437,10 +373,10 @@ if (typeof module !== 'undefined') {
         overlay.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 2147483640; pointer-events: none; overflow: hidden;`;
         document.body.appendChild(overlay);
       }
-      
+
       this.lyricsEngine = new LyricsEngine(overlay);
       this.lyricsEngine.initHTML();
-      
+
       if (lrcContent) {
         this.lyricsEngine.parseLrc(lrcContent);
       }
@@ -508,7 +444,7 @@ if (typeof module !== 'undefined') {
 
       this.updateLoop = this.updateLoop.bind(this);
       this.handleVideoEvent = this.handleVideoEvent.bind(this);
-      
+
       this.init();
     }
 
@@ -537,7 +473,7 @@ if (typeof module !== 'undefined') {
           const res = await fetch(`http://localhost:5010${info.path}`);
           const buf = await res.arrayBuffer();
           this.audioBuffers[name] = await this.audioContext.decodeAudioData(buf);
-        } catch(e) { console.error(e); }
+        } catch (e) { console.error(e); }
       });
       await Promise.all(promises);
       if (statusEl) statusEl.textContent = 'Ready';
@@ -565,7 +501,7 @@ if (typeof module !== 'undefined') {
       if (!this.audioBuffers['vocal']) return;
       if (e.type === 'pause' || e.type === 'waiting') this.stopAudio();
       else if (!v.paused && v.readyState >= 3) this.playAudio(v.currentTime);
-      
+
       const btn = document.getElementById('cp-play-btn');
       if (btn) btn.innerHTML = v.paused ? '▶' : '⏸';
     }
@@ -586,7 +522,7 @@ if (typeof module !== 'undefined') {
     }
 
     stopAudio() {
-      this.activeSources.forEach(s => { try { s.source.stop(); } catch(e){} });
+      this.activeSources.forEach(s => { try { s.source.stop(); } catch (e) { } });
       this.activeSources = [];
     }
 
@@ -602,21 +538,21 @@ if (typeof module !== 'undefined') {
       document.getElementById('cp-close-btn').onclick = () => this.destroy();
       document.getElementById('cp-play-btn').onclick = () => {
         const v = this.videoElement;
-        if(v) v.paused ? v.play() : v.pause();
+        if (v) v.paused ? v.play() : v.pause();
       };
-      
+
       const progress = document.getElementById('cp-progress');
       progress.oninput = () => this.isDragging = true;
       progress.onchange = () => {
         this.isDragging = false;
-        if(this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
+        if (this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
       };
 
       container.querySelectorAll('input[data-track]').forEach(input => {
         input.oninput = (e) => {
           this.volumes[e.target.dataset.track] = parseInt(e.target.value);
           this.activeSources.forEach(s => {
-            if(s.name === e.target.dataset.track) s.gainNode.gain.value = e.target.value / 100;
+            if (s.name === e.target.dataset.track) s.gainNode.gain.value = e.target.value / 100;
           });
         };
       });
@@ -658,5 +594,7 @@ if (typeof module !== 'undefined') {
   }
 
   // 앱 시작
-  new YouTubeTrackSeparator();
+  setTimeout(() => {
+    new YouTubeTrackSeparator();
+  }, 2000);
 })();
