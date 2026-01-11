@@ -1,6 +1,6 @@
 /**
- * Lyrics Overlay Engine V2.2
- * 변경: 자체 UI 제거, 외부(Player UI) 바인딩 지원
+ * Lyrics Overlay Engine V2.5
+ * 변경: 드래그 영역을 '활성 라인의 텍스트(Span)'로 좁혀 유튜브 플레이어 간섭 최소화
  */
 (function (root) {
     class LyricsEngine {
@@ -11,7 +11,15 @@
             this.lyricsBox = null;
             this.domLines = [];
 
-            // 기본 설정 (폰트 등)
+            // 드래그 관련 상태
+            this.dragState = {
+                isDragging: false,
+                startX: 0,
+                currentTranslateX: 0,
+                initialTranslateX: 0
+            };
+
+            // 설정
             this.config = {
                 fontFamily: "'Pretendard', sans-serif",
                 fontSize: 80,
@@ -28,7 +36,7 @@
             this.loadWebFonts();
             this.injectStyles();
             this.createDOM();
-            // createControlPanel() 제거됨 - Player UI에서 제어
+            this.enableHorizontalDrag();
         }
 
         loadWebFonts() {
@@ -58,7 +66,8 @@
                 .ap-lyrics-box {
                     position: absolute; top: 50%; left: 0; width: 100%; text-align: center;
                     transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-                    pointer-events: none;
+                    pointer-events: none; /* 박스 전체 클릭 투과 */
+                    user-select: none;
                 }
                 .ap-line {
                     height: calc(var(--ap-font-size) * 1.8);
@@ -72,7 +81,17 @@
                     transition: all 0.2s ease-out;
                     -webkit-text-stroke: 1px rgba(0,0,0,0.3);
                     position: relative;
+                    pointer-events: none; /* 라인 전체 클릭 투과 */
                 }
+                
+                /* [핵심 변경] Span 스타일 정의 */
+                .ap-line span {
+                    display: inline-block;
+                    padding: 5px 10px; /* 클릭 편의성을 위한 최소한의 패딩 */
+                    border-radius: 4px;
+                    pointer-events: none; /* 기본 상태: 클릭 불가 */
+                }
+
                 .ap-line.active {
                     color: #ffffff !important;
                     opacity: 1 !important;
@@ -81,7 +100,23 @@
                     -webkit-text-stroke: 1.5px rgba(0,0,0,0.8);
                     text-shadow: 0 4px 10px rgba(0,0,0,0.5);
                     filter: drop-shadow(0 0 5px rgba(255,255,255,0.3));
+                    
+                    /* [핵심] 활성 라인 자체는 여전히 클릭 투과 */
+                    pointer-events: none; 
                 }
+
+                /* [핵심] 오직 활성 라인의 '텍스트(Span)'만 클릭 가능 */
+                .ap-line.active span {
+                    pointer-events: auto; 
+                    cursor: ew-resize;
+                    background: rgba(0, 0, 0, 0.01); /* 투명 배경(이벤트 감지용) */
+                }
+                
+                .ap-line.active span:active {
+                    cursor: grabbing;
+                    background: rgba(255, 255, 255, 0.1); /* 드래그 중 시각적 피드백(선택 사항) */
+                }
+
                 .ap-line.near { opacity: 0.6; color: #ddd; -webkit-text-stroke: 0.5px black; }
                 
                 .ap-dots {
@@ -96,24 +131,69 @@
 
         createDOM() {
             this.container.innerHTML = '';
+            this.container.style.transform = 'translateX(0px)';
+            
             this.lyricsBox = document.createElement('div');
             this.lyricsBox.className = 'ap-lyrics-box';
             this.container.appendChild(this.lyricsBox);
         }
 
-        // [New] 외부 UI(Player)의 컨트롤 요소와 연결
+        enableHorizontalDrag() {
+            if (!this.lyricsBox || !this.container) return;
+
+            const onMouseDown = (e) => {
+                if (e.button !== 0) return;
+
+                // [중요] 클릭된 타겟이 활성 라인의 'span'인지 확인
+                // .ap-line.active 자체를 클릭하면 동작하지 않음 (span만 허용)
+                if (!e.target.closest('.ap-line.active span')) return;
+
+                this.dragState.isDragging = true;
+                this.dragState.startX = e.clientX;
+                this.dragState.initialTranslateX = this.dragState.currentTranslateX;
+
+                document.body.addEventListener('mousemove', onMouseMove);
+                document.body.addEventListener('mouseup', onMouseUp);
+                
+                e.preventDefault(); // 텍스트 선택 방지
+            };
+
+            const onMouseMove = (e) => {
+                if (!this.dragState.isDragging) return;
+
+                e.preventDefault();
+                const dx = e.clientX - this.dragState.startX;
+                const newTranslateX = this.dragState.initialTranslateX + dx;
+                
+                this.container.style.transform = `translateX(${newTranslateX}px)`;
+            };
+
+            const onMouseUp = (e) => {
+                if (!this.dragState.isDragging) return;
+
+                const dx = e.clientX - this.dragState.startX;
+                this.dragState.currentTranslateX = this.dragState.initialTranslateX + dx;
+                
+                this.dragState.isDragging = false;
+                
+                document.body.removeEventListener('mousemove', onMouseMove);
+                document.body.removeEventListener('mouseup', onMouseUp);
+            };
+
+            // 이벤트 리스너 등록
+            this.lyricsBox.addEventListener('mousedown', onMouseDown);
+        }
+
         bindUI() {
-            // 폰트
+            // (이전 코드와 동일 - 폰트, 크기, 싱크 설정 등)
             const fontSel = document.getElementById('ap-cfg-font');
             if (fontSel) {
-                fontSel.value = this.config.fontFamily; // 초기값 동기화
+                fontSel.value = this.config.fontFamily;
                 fontSel.onchange = (e) => {
                     this.config.fontFamily = e.target.value;
                     document.documentElement.style.setProperty('--ap-font-family', this.config.fontFamily);
                 };
             }
-
-            // 크기
             const sizeRange = document.getElementById('ap-cfg-size');
             if (sizeRange) {
                 sizeRange.value = this.config.fontSize;
@@ -122,11 +202,9 @@
                     const valSize = document.getElementById('val-size');
                     if(valSize) valSize.textContent = `${e.target.value}px`;
                     document.documentElement.style.setProperty('--ap-font-size', `${e.target.value}px`);
-                    this.render(); // 사이즈 변경 시 재렌더링 (높이 계산)
+                    this.render();
                 };
             }
-
-            // 확대
             const scaleRange = document.getElementById('ap-cfg-scale');
             if (scaleRange) {
                 scaleRange.value = this.config.activeScale;
@@ -137,20 +215,14 @@
                     document.documentElement.style.setProperty('--ap-active-scale', e.target.value);
                 };
             }
-
-            // 병합
             const mergeRange = document.getElementById('ap-cfg-merge');
             if (mergeRange) {
                 mergeRange.value = this.config.mergeThreshold;
                 mergeRange.oninput = (e) => {
                     this.config.mergeThreshold = parseFloat(e.target.value);
-                    const valMerge = document.getElementById('val-merge');
-                    if(valMerge) valMerge.textContent = `${this.config.mergeThreshold}s`;
-                    this.processLyrics(); // 재처리
+                    this.processLyrics();
                 };
             }
-
-            // 싱크
             const syncInp = document.getElementById('ap-cfg-sync');
             const updateSync = (val) => {
                 const newVal = parseFloat(val.toFixed(1));
@@ -159,14 +231,12 @@
                 const valSync = document.getElementById('val-sync');
                 if(valSync) valSync.textContent = `${newVal > 0 ? '+' : ''}${newVal}s`;
             };
-
             if(syncInp) {
                 syncInp.value = this.config.syncOffset;
                 syncInp.onchange = (e) => updateSync(parseFloat(e.target.value));
             }
             const btnMinus = document.getElementById('btn-sync-minus');
             if(btnMinus) btnMinus.onclick = () => updateSync(this.config.syncOffset - 0.1);
-            
             const btnPlus = document.getElementById('btn-sync-plus');
             if(btnPlus) btnPlus.onclick = () => updateSync(this.config.syncOffset + 0.1);
         }
@@ -272,6 +342,8 @@
             this.lyrics.forEach(line => {
                 const div = document.createElement('div');
                 div.className = 'ap-line';
+                
+                // [확인] 텍스트를 span으로 감싸서 생성
                 div.innerHTML = `<span>${line.text}</span>`;
 
                 if (line.needsCountdown) {
