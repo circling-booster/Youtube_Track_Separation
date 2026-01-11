@@ -1,8 +1,7 @@
 /**
- * Hybrid Track Player Engine V2.3 (Format Fixed)
- * - Fixed: Message format for Rubberband AudioWorklet (Object -> Array)
- * - Rubberband JS를 이용한 고품질 피치 시프팅
- * - 드럼 트랙 바이패스 및 지연 보상(Latency Compensation) 포함
+ * Hybrid Track Player Engine V2.5 (No Auto-Hide)
+ * - Fixed: UI disappearing issue (Auto-hide removed)
+ * - Fixed: Background blur issue logic handled in UI template
  */
 (function(root) {
     class AudioPlayer {
@@ -24,21 +23,18 @@
             this.container = null;
             this.minimizedIcon = null;
 
-            // UI 상태
-            this.hideTimer = null;
-            this.isHoveringUI = false;
+            // [Modified] Auto-Hide 관련 변수 제거
             this.isDragging = false; 
-            this.resetAutoHide = this.resetAutoHide.bind(this);
 
-            // 피치 & 싱크 관련
+            // Pitch & Sync
             this.pitch = 1.0; 
-            this.pitchNode = null;        // Rubberband AudioWorkletNode
-            this.pitchGroupInput = null;  // 피치 적용 그룹 (Vocal+Bass+Other)
-            this.drumDelayNode = null;    // 드럼 싱크 보정용
+            this.currentSemitones = 0; 
+            this.pitchNode = null;
+            this.pitchGroupInput = null;
+            this.drumDelayNode = null;
             this.isRubberbandReady = false;
             
-            // Rubberband Latency 보정값 (초 단위, 약 50~100ms)
-            this.baseLatency = 0.05; 
+            this.drumCorrectionMs = 50; 
 
             this.handleFullscreenChange = this.handleFullscreenChange.bind(this);
             this.updateLoop = this.updateLoop.bind(this);
@@ -58,115 +54,73 @@
 
         async init() {
             this.createUI();
-            this.setupAutoHide();
+            // [Modified] setupAutoHide 호출 제거 (항상 표시)
             this.attachFullscreenListener();
-            
-            // 1. Rubberband Worklet 로드
             await this.initPitchShifter();
-            
-            // 2. 오디오 트랙 다운로드 및 디코딩
             await this.loadAllTracks();
-            
-            // 3. 루프 시작
             this.updateLoop();
         }
 
         async initPitchShifter() {
             try {
-                // manifest.json에 등록된 경로 사용
                 const workletUrl = chrome.runtime.getURL('rubberband-processor.js');
-                
-                // AudioWorklet 모듈 추가
                 await this.audioContext.audioWorklet.addModule(workletUrl);
                 
-                // 노드 생성 ('rubberband-processor'는 라이브러리 내부 등록 이름)
                 this.pitchNode = new AudioWorkletNode(this.audioContext, 'rubberband-processor');
-                
-                // 에러 핸들링
-                this.pitchNode.onprocessorerror = (err) => {
-                    console.error('[Player] Rubberband Worklet Error:', err);
-                };
+                this.pitchNode.onprocessorerror = (err) => console.error('[Player] Worklet Error:', err);
 
-                // 피치 그룹 (Vocal, Bass, Other가 여기로 모임 -> 피치 변경됨)
                 this.pitchGroupInput = this.audioContext.createGain();
                 this.pitchGroupInput.connect(this.pitchNode);
                 this.pitchNode.connect(this.audioContext.destination);
 
-                // 드럼 싱크용 딜레이 (최대 1초 버퍼)
-                this.drumDelayNode = this.audioContext.createDelay(1.0);
-                this.drumDelayNode.delayTime.value = 0; // 초기값 (피치 1.0일 때 0)
+                this.drumDelayNode = this.audioContext.createDelay(2.0); 
+                this.drumDelayNode.delayTime.value = 0; 
                 this.drumDelayNode.connect(this.audioContext.destination);
 
                 this.isRubberbandReady = true;
-                console.log('[Player] Rubberband AudioWorklet loaded successfully');
-
-                // 초기 설정 (피치 1.0)
                 this.updatePitch(0);
 
             } catch (e) {
-                console.warn('[Player] Rubberband load failed. Pitch shifting will be disabled.', e);
+                console.warn('[Player] Rubberband failed:', e);
                 this.isRubberbandReady = false;
             }
         }
 
-        // 피치 업데이트 (semitones: -5 ~ 5)
+        setDrumDelayCorrection(ms) {
+            this.drumCorrectionMs = ms;
+            this.applyDrumDelay();
+        }
+
+        applyDrumDelay() {
+            if (!this.drumDelayNode) return;
+            if (this.currentSemitones !== 0) {
+                this.drumDelayNode.delayTime.value = this.drumCorrectionMs / 1000.0;
+            } else {
+                this.drumDelayNode.delayTime.value = 0;
+            }
+        }
+
         updatePitch(semitones) {
             if (!this.isRubberbandReady || !this.pitchNode) return;
-
-            // 1. 피치 비율 계산 (2^(n/12))
+            
+            this.currentSemitones = semitones;
             const ratio = Math.pow(2, semitones / 12.0);
             this.pitch = ratio;
 
-            // 2. 메시지 전송 (★수정됨: 배열 포맷 ["pitch", value] 사용★)
-            // rubberband-processor.js 내부: var g=JSON.parse(I.data), C=g[0], Q=g[1];
             const payload = ["pitch", ratio];
-            
-            try {
-                this.pitchNode.port.postMessage(JSON.stringify(payload));
-            } catch (e) {
-                console.error('[Player] Failed to send pitch command:', e);
-            }
-
-            // 3. 드럼 딜레이 보정 (Latency Compensation)
-            // 피치 변환이 켜지면(0이 아니면) Rubberband 내부 버퍼링으로 인한 지연이 발생하므로
-            // 바이패스되는 드럼 트랙에도 동일한 지연을 줍니다.
-            if (semitones !== 0) {
-                this.drumDelayNode.delayTime.value = this.baseLatency; 
-            } else {
-                this.drumDelayNode.delayTime.value = 0; 
-            }
+            try { this.pitchNode.port.postMessage(JSON.stringify(payload)); } catch (e) {}
+            this.applyDrumDelay();
         }
 
-        setupAutoHide() {
-            if (this.container) {
-                this.container.addEventListener('mouseenter', () => { this.isHoveringUI = true; this.resetAutoHide(); });
-                this.container.addEventListener('mouseleave', () => { this.isHoveringUI = false; this.resetAutoHide(); });
-            }
-            document.addEventListener('mousemove', this.resetAutoHide);
-            document.addEventListener('click', this.resetAutoHide);
-            document.addEventListener('keydown', this.resetAutoHide);
-            this.resetAutoHide();
-        }
-
-        resetAutoHide() {
-            if (!this.container) return;
-            this.container.classList.remove('ui-idle');
-            if (this.hideTimer) clearTimeout(this.hideTimer);
-            this.hideTimer = setTimeout(() => {
-                if (!this.isHoveringUI && !this.isDragging) {
-                    this.container.classList.add('ui-idle');
-                }
-            }, 3000);
-        }
+        // [Modified] resetAutoHide 함수 제거됨
 
         attachFullscreenListener() {
             document.addEventListener('fullscreenchange', this.handleFullscreenChange);
-            document.addEventListener('webkitfullscreenchange', this.handleFullscreenChange);
         }
 
         handleFullscreenChange() {
             if (!this.container) return;
-            const isFullscreen = !!document.fullscreenElement || !!document.webkitFullscreenElement;
+            const isFullscreen = !!document.fullscreenElement;
             if (isFullscreen) {
                 this.container.classList.add('fs-mode');
             } else {
@@ -187,17 +141,15 @@
                     const blob = await res.blob();
                     const arrayBuffer = await blob.arrayBuffer();
                     const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-
-                    // HTMLAudioElement 생성 (1.0배속 아닐 때 및 폴백용)
+                    
                     const blobUrl = URL.createObjectURL(blob);
                     const audioEl = new Audio(blobUrl);
-                    audioEl.preservesPitch = true; 
+                    audioEl.preservesPitch = true;
                     audioEl.crossOrigin = "anonymous";
                     
                     const elSource = this.audioContext.createMediaElementSource(audioEl);
                     const elGain = this.audioContext.createGain();
                     elSource.connect(elGain);
-                    // Element 모드는 기본적으로 Destination으로 바로 연결 (피치 조절 불가)
                     elGain.connect(this.audioContext.destination);
                     elGain.gain.value = 0; 
 
@@ -207,7 +159,6 @@
                         element: audioEl,
                         elementGain: elGain
                     };
-
                 } catch (e) { console.error(`Failed to load ${name}:`, e); }
             });
 
@@ -263,7 +214,6 @@
 
         checkModeAndPlay(v, forceRestart = false) {
             const rate = v.playbackRate;
-            // 1.0배속일 때만 Buffer 모드(피치 조절 가능) 사용
             const isNormalSpeed = (rate === 1.0);
             const newMode = isNormalSpeed ? 'buffer' : 'element';
             
@@ -277,7 +227,6 @@
             if (this.mode === 'buffer') {
                 this.playBufferMode(v.currentTime);
             } else {
-                // 배속 재생 시에는 피치 조절 기능을 끕니다 (Element 모드 사용)
                 this.playElementMode(v.currentTime, rate);
             }
         }
@@ -294,25 +243,19 @@
                 
                 source.connect(gain);
 
-                // *** 오디오 라우팅 핵심 ***
                 if (this.isRubberbandReady) {
                     if (name === 'drum') {
-                        // 드럼: Rubberband 우회 -> DelayNode (싱크 보정)
                         gain.connect(this.drumDelayNode); 
                     } else {
-                        // 보컬, 베이스, 기타: Pitch Group -> Rubberband Worklet
                         gain.connect(this.pitchGroupInput);
                     }
                 } else {
-                    // Rubberband 실패 시 직결
                     gain.connect(this.audioContext.destination);
                 }
                 
                 source.start(0, startTime);
-                
                 this.activeSourceNodes.push({ source, gain, name });
-                
-                res.element.pause(); // HTML5 오디오는 중지
+                res.element.pause(); 
             });
         }
 
@@ -334,10 +277,7 @@
                 try { node.source.stop(); } catch(e) {}
             });
             this.activeSourceNodes = [];
-
-            Object.values(this.resources).forEach(res => {
-                res.element.pause();
-            });
+            Object.values(this.resources).forEach(res => res.element.pause());
         }
 
         updateLoop() {
@@ -360,8 +300,6 @@
                     
                     const currText = document.getElementById('cp-curr-time');
                     if(currText) currText.textContent = this.formatTime(v.currentTime);
-                    const totalText = document.getElementById('cp-total-time');
-                    if(totalText) totalText.textContent = this.formatTime(total);
                 }
             }
             this.rafId = requestAnimationFrame(this.updateLoop);
@@ -381,7 +319,7 @@
 
             this.createMinimizedIcon();
 
-            // === Event Bindings ===
+            // Event Bindings
             document.getElementById('cp-close-btn').onclick = () => this.destroy();
             document.getElementById('cp-minimize-btn').onclick = () => this.toggleMinimize(true);
             document.getElementById('cp-play-btn').onclick = () => {
@@ -389,25 +327,57 @@
                 if(v) v.paused ? v.play() : v.pause();
             };
 
-            const opacitySlider = document.getElementById('cp-opacity-slider');
-            if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
-            
-            // [NEW] Pitch Slider Binding
+            const settingsBtn = document.getElementById('cp-settings-toggle-btn');
+            const settingsPanel = document.getElementById('cp-settings-panel');
+            const settingsClose = document.getElementById('cp-settings-close');
+
+            if(settingsBtn && settingsPanel) {
+                settingsBtn.onclick = () => {
+                    const isVisible = settingsPanel.style.display !== 'none';
+                    settingsPanel.style.display = isVisible ? 'none' : 'flex';
+                };
+                if(settingsClose) settingsClose.onclick = () => settingsPanel.style.display = 'none';
+            }
+
+            // Pitch Button Logic
             const pitchSlider = document.getElementById('cp-pitch-slider');
             const pitchVal = document.getElementById('cp-pitch-val');
-            if (pitchSlider) {
-                pitchSlider.oninput = (e) => {
-                    this.resetAutoHide();
-                    const semitones = parseInt(e.target.value);
-                    pitchVal.textContent = semitones > 0 ? `+${semitones}` : semitones;
-                    this.updatePitch(semitones);
+            const btnDown = document.getElementById('cp-pitch-down');
+            const btnUp = document.getElementById('cp-pitch-up');
+
+            const setPitchUI = (val) => {
+                if (val < -6) val = -6;
+                if (val > 6) val = 6;
+                pitchSlider.value = val;
+                pitchVal.textContent = val > 0 ? `+${val}` : val;
+                pitchVal.style.color = val === 0 ? '#fff' : '#3ea6ff';
+                this.updatePitch(val);
+            };
+
+            if (btnDown && btnUp) {
+                btnDown.onclick = (e) => { e.stopPropagation(); setPitchUI(parseInt(pitchSlider.value) - 1); };
+                btnUp.onclick = (e) => { e.stopPropagation(); setPitchUI(parseInt(pitchSlider.value) + 1); };
+            }
+
+            // Drum Sync Slider Logic
+            const drumSyncSlider = document.getElementById('ap-cfg-drum-sync');
+            const drumSyncVal = document.getElementById('val-drum-sync');
+            if (drumSyncSlider) {
+                drumSyncSlider.value = this.drumCorrectionMs;
+                drumSyncSlider.oninput = (e) => {
+                    const ms = parseInt(e.target.value);
+                    if(drumSyncVal) drumSyncVal.textContent = `${ms}ms`;
+                    this.setDrumDelayCorrection(ms);
                 };
             }
 
+            const opacitySlider = document.getElementById('cp-opacity-slider');
+            if(opacitySlider) opacitySlider.oninput = (e) => this.container.style.opacity = e.target.value;
+            
             const progress = document.getElementById('cp-progress');
-            progress.onmousedown = () => { this.isDragging = true; this.resetAutoHide(); };
-            progress.onmouseup = () => { this.isDragging = false; this.resetAutoHide(); };
-            progress.oninput = () => { this.isDragging = true; this.resetAutoHide(); };
+            progress.onmousedown = () => { this.isDragging = true; };
+            progress.onmouseup = () => { this.isDragging = false; };
+            progress.oninput = () => { this.isDragging = true; };
             progress.onchange = () => {
                 this.isDragging = false;
                 if(this.videoElement) this.videoElement.currentTime = (progress.value / 100) * this.videoElement.duration;
@@ -417,34 +387,22 @@
             if (toggleBtn) {
                 toggleBtn.onclick = () => {
                     this.container.classList.toggle('hide-peripherals');
-                    const isHidden = this.container.classList.contains('hide-peripherals');
-                    toggleBtn.innerHTML = isHidden ? '🔳' : '👁️'; 
-                    toggleBtn.style.opacity = isHidden ? '0.5' : '1.0';
+                    toggleBtn.style.opacity = this.container.classList.contains('hide-peripherals') ? '0.5' : '1.0';
                 };
             }
 
-            // Volume Binding
             this.container.querySelectorAll('input[data-track]').forEach(input => {
-                input.onmousedown = () => { this.isDragging = true; };
-                input.onmouseup = () => { this.isDragging = false; };
                 input.oninput = (e) => {
-                    this.resetAutoHide();
                     const track = e.target.dataset.track;
                     const val = parseInt(e.target.value);
                     this.volumes[track] = val;
-                    
-                    this.activeSourceNodes.forEach(node => {
-                        if (node.name === track) {
-                            node.gain.gain.value = val / 100;
-                        }
+                    this.activeSourceNodes.forEach(s => {
+                        if(s.name === track) s.gainNode.gain.value = val / 100;
                     });
-                    if (this.resources[track]) {
-                        this.resources[track].elementGain.gain.value = val / 100;
-                    }
                 };
             });
         }
-        
+
         createMinimizedIcon() {
             this.minimizedIcon = document.createElement('div');
             this.minimizedIcon.id = 'yt-sep-minimized-icon';
@@ -476,30 +434,13 @@
 
         destroy() {
             document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
-            document.removeEventListener('webkitfullscreenchange', this.handleFullscreenChange);
-            document.removeEventListener('mousemove', this.resetAutoHide);
-            document.removeEventListener('click', this.resetAutoHide);
-            document.removeEventListener('keydown', this.resetAutoHide);
-            if (this.hideTimer) clearTimeout(this.hideTimer);
-
             if (this.rafId) cancelAnimationFrame(this.rafId);
             this.stopAll();
-            
-            Object.values(this.resources).forEach(res => {
-                if (res.blobUrl) URL.revokeObjectURL(res.blobUrl);
-            });
-            this.resources = {};
-
+            Object.values(this.resources).forEach(res => URL.revokeObjectURL(res.blobUrl));
             if (this.audioContext) this.audioContext.close();
             if (this.container) this.container.remove();
             if (this.minimizedIcon) this.minimizedIcon.remove();
-            
-            // ScriptProcessor 해제
-            if (this.pitchNode) {
-                this.pitchNode.disconnect();
-                // AudioWorkletNode는 명시적 destroy 없음, 연결 해제로 충분
-            }
-            
+            if (this.pitchNode) this.pitchNode.disconnect();
             this._cachedVideo = null;
         }
     }

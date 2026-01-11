@@ -1,4 +1,5 @@
-// yt-sep-ui-templates.js
+// extension/ui-templates.js
+
 (function (root) {
   function setupPanelHTML() {
     return `
@@ -33,76 +34,126 @@
       `).join("");
   }
 
-  function lyricsSettingsHTML() {
-      // (이전 코드와 동일하므로 생략 - 위 track_player.js와 함께 동작하도록 기존 코드 유지)
-      return ``; // (실제 사용시 기존 lyricsSettingsHTML 내용 유지)
-  }
-
   function customPlayerHTML(tracks) {
-    // 기존 가사 설정 HTML을 위해 임시 함수 정의 (실제 적용 시에는 위 lyricsSettingsHTML 전체 내용을 여기에 포함하거나 호출)
-    const lyricsHTML = `
-        <div id="cp-lyrics-panel" class="sep-lyrics-settings" style="display:none;">
-            <div class="sep-ls-header"><span>자막 설정</span><button id="cp-lyrics-close" style="background:none; border:none; color:#aaa;">✕</button></div>
-            <div class="sep-ls-row"><label>폰트</label><select id="ap-cfg-font" class="sep-ls-select"><option value="'Pretendard', sans-serif">Pretendard</option></select></div>
-            <div class="sep-ls-row"><label>크기</label><input type="range" id="ap-cfg-size" class="sep-ls-range" min="20" max="150" value="80"></div>
-            <div class="sep-ls-row"><label>싱크</label><input type="number" id="ap-cfg-sync" class="sep-ls-input" value="-0.5" step="0.1"></div>
+    const settingsHTML = `
+        <div id="cp-settings-panel" class="sep-lyrics-settings" style="display:none;">
+            <div class="sep-ls-header"><span>⚙️ 오디오/자막 설정</span><button id="cp-settings-close" style="background:none; border:none; color:#aaa; cursor:pointer;">✕</button></div>
+            
+            <div class="sep-ls-section" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #444;">
+                <div class="sep-ls-row"><label>🥁 드럼 싱크</label><span id="val-drum-sync" style="font-size:11px; color:#3ea6ff;">50ms</span></div>
+                <input type="range" id="ap-cfg-drum-sync" class="sep-ls-range" min="0" max="200" value="50" step="5" title="드럼이 빠를 때 지연 추가">
+                <div style="font-size:10px; color:#888; margin-top:2px;">* 피치 조절 시 엇박자 보정용</div>
+            </div>
+
+            <div class="sep-ls-row"><label>자막 폰트</label><select id="ap-cfg-font" class="sep-ls-select"><option value="'Pretendard', sans-serif">Pretendard</option><option value="'Nanum Gothic', sans-serif">나눔고딕</option></select></div>
+            <div class="sep-ls-row"><label>자막 크기</label><input type="range" id="ap-cfg-size" class="sep-ls-range" min="20" max="150" value="80"></div>
+            <div class="sep-ls-row"><label>자막 싱크</label><input type="number" id="ap-cfg-sync" class="sep-ls-input" value="-0.5" step="0.1"></div>
         </div>`;
 
     return `
       <style>
-        /* (기존 스타일 유지) */
         #yt-custom-player-ui {
             position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
             width: 90%; max-width: 800px;
             background: rgba(15, 15, 15, 0.95); 
-            backdrop-filter: none;
+            /* backdrop-filter removed */
             border: 1px solid #444; border-radius: 16px; padding: 20px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.6); z-index: 2147483647;
             display: flex; flex-direction: column; gap: 15px;
-            font-family: 'Nanum Gothic', sans-serif;
+            font-family: 'Pretendard', sans-serif;
             transition: opacity 0.3s ease;
         }
         #yt-custom-player-ui.ui-idle { opacity: 0 !important; pointer-events: none; }
+        
         .sep-player-header { display: flex; justify-content: space-between; align-items: center; }
+        
         .sep-main-controls {
-            display: flex; align-items: center; gap: 15px;
+            display: flex; align-items: center; gap: 10px;
             background: rgba(255,255,255,0.05); padding: 10px; border-radius: 12px;
-            position: relative; 
+            position: relative; flex-wrap: wrap;
         }
+        
         .sep-tracks-container {
             display: flex; gap: 15px; background: #222; padding: 15px; border-radius: 10px;
             transition: opacity 0.3s ease, visibility 0.3s;
         }
         #yt-custom-player-ui.hide-peripherals .sep-tracks-container { opacity: 0; visibility: hidden; pointer-events: none; }
+        
         .sep-track-group { display: flex; flex-direction: column; align-items: center; flex: 1; }
         .sep-track-label { font-size: 11px; color: #aaa; margin-bottom: 8px; text-transform: uppercase; font-weight: bold; }
+        
         .yt-sep-slider { width: 100%; cursor: pointer; height: 4px; -webkit-appearance: none; background: #444; border-radius: 2px; }
         .yt-sep-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: #3ea6ff; border-radius: 50%; }
-        
-        /* 전체화면 모드 스타일 (생략 - 기존 유지) */
-        #yt-custom-player-ui.fs-mode { bottom: 0; left: 0; transform: none; width: 100%; height: 100%; max-width: none; background: transparent; border: none; padding: 40px; pointer-events: none; }
+
+        .yt-pitch-btn {
+            width: 24px; height: 24px; border-radius: 4px; border: 1px solid #555;
+            background: #333; color: white; cursor: pointer; font-weight: bold;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.1s; font-size: 16px;
+        }
+        .yt-pitch-btn:hover { background: #444; border-color: #888; }
+        .yt-pitch-btn:active { background: #222; }
+
+        .sep-lyrics-settings {
+            position: absolute; bottom: 100%; right: 0; width: 220px;
+            background: rgba(30, 30, 30, 0.95); border: 1px solid #555;
+            border-radius: 8px; padding: 15px; display: flex; flex-direction: column; gap: 10px;
+            color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.5); font-size: 13px;
+        }
+        .sep-ls-header { display: flex; justify-content: space-between; margin-bottom: 5px; font-weight: bold; color: #ddd; }
+        .sep-ls-row { display: flex; justify-content: space-between; align-items: center; }
+        .sep-ls-range { width: 120px; accent-color: #3ea6ff; }
+        .sep-ls-select, .sep-ls-input { background: #444; border: none; color: white; padding: 2px 5px; border-radius: 3px; width: 100px; text-align: right; }
+
+        /* [Modified] Fullscreen Mode Style (No Blur) */
+        #yt-custom-player-ui.fs-mode { 
+            bottom: 0; left: 0; transform: none; 
+            width: 100%; height: 100%; max-width: none; 
+            background: transparent; border: none; padding: 40px; 
+            pointer-events: none;
+            backdrop-filter: none !important; /* Force disable blur */
+        }
+
         #yt-custom-player-ui.fs-mode .sep-player-header { display: none; }
-        #yt-custom-player-ui.fs-mode .sep-main-controls { position: absolute; bottom: 10%; left: 50%; transform: translateX(-50%); width: 60%; min-width: 600px; background: rgba(0,0,0,0.7); pointer-events: auto; }
-        #yt-custom-player-ui.fs-mode .sep-tracks-container { background: transparent; display: block; width: 100%; height: 100%; padding: 0; }
-        #yt-custom-player-ui.fs-mode .sep-track-group { position: absolute; width: 250px; background: rgba(0,0,0,0.6); padding: 20px; border-radius: 16px; pointer-events: auto; }
+        
+        #yt-custom-player-ui.fs-mode .sep-main-controls { 
+            position: absolute; bottom: 10%; left: 50%; transform: translateX(-50%); 
+            width: 60%; min-width: 600px; 
+            background: rgba(0,0,0,0.8); /* Dark background instead of blur */
+            pointer-events: auto; z-index: 100;
+        }
+
+        #yt-custom-player-ui.fs-mode .sep-tracks-container { 
+            background: transparent; display: block; 
+            width: 100%; height: 100%; padding: 0; 
+            position: absolute; top: 0; left: 0;
+            pointer-events: none;
+        }
+
+        /* Absolute positioning for tracks in FS mode */
+        #yt-custom-player-ui.fs-mode .sep-track-group { 
+            position: absolute; width: 250px; 
+            background: rgba(0,0,0,0.6); padding: 20px; border-radius: 16px; 
+            pointer-events: auto;
+            transition: all 0.3s ease;
+        }
+        
         #yt-custom-player-ui.fs-mode .sep-track-vocal { top: 15%; left: 10%; }
         #yt-custom-player-ui.fs-mode .sep-track-drum  { top: 15%; right: 10%; }
         #yt-custom-player-ui.fs-mode .sep-track-other { bottom: 25%; left: 10%; }
         #yt-custom-player-ui.fs-mode .sep-track-bass  { bottom: 25%; right: 10%; }
+
+        #yt-custom-player-ui.fs-mode .sep-track-group:hover {
+            background: rgba(0,0,0,0.8); transform: scale(1.05);
+        }
       </style>
 
       <div class="sep-player-header">
         <div style="display:flex; align-items:center; gap:10px;">
             <span id="cp-status" style="font-size:12px; color:#3ea6ff; font-weight:bold;">준비 중...</span>
             <div style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.1); padding:2px 8px; border-radius:12px;">
-                <span style="font-size:10px; color:#aaa;">👁️</span>
+                <span style="font-size:10px; color:#aaa;">Op</span>
                 <input type="range" id="cp-opacity-slider" min="0.2" max="1.0" step="0.05" value="0.95" style="width:60px; height:4px; accent-color:#aaa;">
-            </div>
-            
-            <div style="display:flex; align-items:center; gap:5px; background:rgba(255,255,255,0.1); padding:2px 8px; border-radius:12px; margin-left:5px;">
-                <span style="font-size:10px; color:#aaa;" title="피치 조절 (드럼 제외)">🎵</span>
-                <input type="range" id="cp-pitch-slider" min="-5" max="5" step="1" value="0" style="width:60px; height:4px; accent-color:#3ea6ff;">
-                <span id="cp-pitch-val" style="font-size:10px; color:#fff; width:20px; text-align:center;">0</span>
             </div>
         </div>
         <div style="display:flex; gap:10px;">
@@ -113,14 +164,24 @@
 
       <div class="sep-main-controls">
         <button id="cp-play-btn" class="yt-sep-btn" style="width:40px; height:40px; border-radius:50%; background:#fff; color:#000; font-size:18px; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center;">▶</button>
+        
         <span id="cp-curr-time" style="font-size:12px; color:white; min-width:40px; text-align:right;">0:00</span>
         <div style="flex:1; position:relative; height:20px; display:flex; align-items:center;">
           <input type="range" id="cp-progress" class="yt-sep-slider" min="0" max="100" step="0.1" value="0" style="width:100%; height:6px;">
         </div>
         <span id="cp-total-time" style="font-size:12px; color:white; min-width:40px;">0:00</span>
-        <button id="cp-toggle-ui-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:10px;" title="UI 숨기기">👁️</button>
-        <button id="cp-lyrics-toggle-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:5px;" title="자막 설정">Aa</button>
-        ${lyricsHTML}
+
+        <div style="display:flex; align-items:center; gap:5px; background:rgba(62, 166, 255, 0.15); padding:4px 8px; border-radius:8px; margin-left:10px; border: 1px solid rgba(62, 166, 255, 0.3);">
+            <span style="font-size:11px; color:#3ea6ff; font-weight:bold; margin-right:2px;">KEY</span>
+            <button id="cp-pitch-down" class="yt-pitch-btn" title="반키 내림">-</button>
+            <span id="cp-pitch-val" style="font-size:14px; color:#fff; width:22px; text-align:center; font-family:monospace;">0</span>
+            <button id="cp-pitch-up" class="yt-pitch-btn" title="반키 올림">+</button>
+            <input type="range" id="cp-pitch-slider" min="-6" max="6" step="1" value="0" style="display:none;">
+        </div>
+
+        <button id="cp-toggle-ui-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:5px;" title="UI 숨기기">👁️</button>
+        <button id="cp-settings-toggle-btn" style="background:transparent; border:1px solid #555; color:white; border-radius:4px; padding:4px 8px; cursor:pointer; margin-left:5px;" title="설정 (드럼 싱크 등)">⚙️</button>
+        ${settingsHTML}
       </div>
 
       <div class="sep-tracks-container">
