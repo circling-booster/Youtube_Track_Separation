@@ -151,11 +151,3 @@
     ├── popup.html/js       \# 확장 프로그램 팝업 UI  
     └── ui-templates.js     \# UI HTML 템플릿 모음
 
-## **📝 라이선스 및 크레딧**
-
-* **Core AI Model**: [Facebook Demucs](https://github.com/facebookresearch/demucs)  
-* **Downloader**: [yt-dlp](https://github.com/yt-dlp/yt-dlp)  
-* **Backend**: Flask, Socket.IO  
-* **Frontend**: Native JS, Web Audio API
-
-Developed by **\[Your Name/Dev ID\]**
