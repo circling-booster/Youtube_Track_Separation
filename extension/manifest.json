@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube 트랙분리",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "유튜브 음악을 보컬, 베이스, 드럼, 기타로 분리하고 가사 싱크 제공",
   "permissions": [
     "activeTab",
@@ -29,6 +29,7 @@
         "socket.io.js",
         "ui-templates.js",
         "extract_info.js",
+        "lyrics_overlay.js",
         "content.js"
       ],
       "run_at": "document_end",
