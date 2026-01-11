@@ -57,7 +57,7 @@
                     <option value="sentence">문장 단위 (기본)</option>
                     <option value="word">단어 단위</option>
                     <option value="char">글자 단위</option>
-                </select>
+                    <option value="hybrid">하이브리드 (노래방)</option> </select>
             </div>
 
             <div class="sep-ls-row">
@@ -98,7 +98,7 @@
             border: 1px solid #444; border-radius: 16px; padding: 20px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.6); z-index: 2147483647;
             display: flex; flex-direction: column; gap: 15px;
-            font-family: 'Pretendard', sans-serif;
+            font-family: 'Nanum Gothic', sans-serif;
             transition: opacity 0.3s ease;
         }
         #yt-custom-player-ui.ui-idle { opacity: 0 !important; pointer-events: none; }

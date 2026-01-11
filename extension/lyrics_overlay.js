@@ -1,6 +1,6 @@
 /**
- * Lyrics Overlay Engine V3.0
- * 변경사항: 표시 모드(문장/단어/글자) 지원, Continuation Flag(^) 처리
+ * Lyrics Overlay Engine V3.5 (Hybrid Mode Added)
+ * 변경사항: 하이브리드(노래방) 모드 추가 - 글자 단위 타이밍 보존 및 점 표시 효과
  */
 (function (root) {
     class LyricsEngine {
@@ -14,14 +14,14 @@
             this.dragState = { isDragging: false, startX: 0, currentTranslateX: 0, initialTranslateX: 0 };
 
             this.config = {
-                fontFamily: "'Pretendard', sans-serif",
-                fontSize: 80,
+                fontFamily: "'Nanum Gothic', sans-serif",
+                fontSize: 70,
                 activeScale: 2.0,
                 syncOffset: -0.5,
                 gapThreshold: 2.0,
                 anticipation: 3.0,
-                // [New] 표시 모드: 'sentence' | 'word' | 'char'
-                viewMode: 'sentence' 
+                // [New] 표시 모드: 'sentence' | 'word' | 'char' | 'hybrid'
+                viewMode: 'word' 
             };
         }
 
@@ -70,7 +70,8 @@
                     color: rgba(255,255,255,0.35); transition: all 0.2s ease-out;
                     -webkit-text-stroke: 1px rgba(0,0,0,0.3); position: relative; pointer-events: none;
                 }
-                .ap-line span {
+                /* span 안에 개별 글자 span이 올 수 있음 (Hybrid Mode) */
+                .ap-line > span {
                     display: inline-block; padding: 5px 10px; border-radius: 4px; pointer-events: none;
                 }
                 .ap-line.active {
@@ -81,17 +82,39 @@
                     filter: drop-shadow(0 0 5px rgba(255,255,255,0.3));
                     pointer-events: none; 
                 }
-                .ap-line.active span {
+                .ap-line.active > span {
                     pointer-events: auto; cursor: ew-resize; background: rgba(0, 0, 0, 0.01);
                 }
-                .ap-line.active span:active { cursor: grabbing; background: rgba(255, 255, 255, 0.1); }
+                .ap-line.active > span:active { cursor: grabbing; background: rgba(255, 255, 255, 0.1); }
                 .ap-line.near { opacity: 0.6; color: #ddd; -webkit-text-stroke: 0.5px black; }
+                
                 .ap-dots {
                     position: absolute; top: 0%; left: 50%; transform: translateX(-50%);
                     display: flex; gap: 6px; opacity: 0; transition: opacity 0.2s;
                 }
                 .ap-dot { width: 6px; height: 6px; border-radius: 50%; background: #ff4444; box-shadow: 0 0 5px red; }
                 .ap-line.show-cnt .ap-dots { opacity: 1; }
+
+                /* [New] 하이브리드 모드 - 개별 글자 스타일 */
+                .ap-char {
+                    position: relative;
+                    display: inline-block;
+                    transition: color 0.1s;
+                }
+                /* 활성화된 글자 위에 점 표시 */
+                .ap-char.played::after {
+                    content: '';
+                    position: absolute;
+                    top: 5px; /* 글자 위 위치 조정 */
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: 8px;
+                    height: 8px;
+                    background-color: #3ea6ff; /* 점 색상 */
+                    border-radius: 50%;
+                    box-shadow: 0 0 5px #3ea6ff;
+                    opacity: 0.9;
+                }
             `;
             document.head.appendChild(style);
         }
@@ -108,7 +131,8 @@
             if (!this.lyricsBox || !this.container) return;
             const onMouseDown = (e) => {
                 if (e.button !== 0) return;
-                if (!e.target.closest('.ap-line.active span')) return;
+                // 하이브리드 모드에서도 드래그 가능하게 수정 (closest span)
+                if (!e.target.closest('.ap-line.active > span')) return;
                 this.dragState.isDragging = true;
                 this.dragState.startX = e.clientX;
                 this.dragState.initialTranslateX = this.dragState.currentTranslateX;
@@ -259,7 +283,14 @@
 
             // [New] 모드별 병합 로직
             while (i < this.rawLyrics.length) {
-                let current = { ...this.rawLyrics[i] };
+                // deep copy to avoid modifying original on re-process
+                let current = JSON.parse(JSON.stringify(this.rawLyrics[i]));
+                
+                // Hybrid 모드용: 하위 타이밍 수집
+                if (mode === 'hybrid') {
+                    current.subTimings = [{ text: current.text, time: current.time }];
+                }
+
                 let j = 1;
                 
                 while (i + j < this.rawLyrics.length && j < 50) { // 안전 장치 50
@@ -271,8 +302,8 @@
                     if (mode === 'char') {
                         shouldMerge = false;
                     }
-                    // 2. 단어 모드 (Word): 이어지는 글자(^)만 합침
-                    else if (mode === 'word') {
+                    // 2. 단어/하이브리드 모드 (Word/Hybrid): 이어지는 글자(^)만 합침
+                    else if (mode === 'word' || mode === 'hybrid') {
                         if (nextItem.isContinuation) {
                             shouldMerge = true;
                             joinWithSpace = false; // 공백 없이 연결
@@ -297,6 +328,16 @@
                     if (shouldMerge) {
                         current.text += (joinWithSpace ? " " : "") + nextItem.text;
                         current.endTime = nextItem.endTime;
+                        
+                        // Hybrid 모드: 개별 글자/음절 타이밍 보존
+                        if (mode === 'hybrid') {
+                            if (joinWithSpace) {
+                                // 공백도 시간은 앞 단어의 끝(혹은 현재 시작)으로 간주하되 표시는 안함
+                                // 여기서는 단순 텍스트 연결만 하고 subTiming은 다음 실제 글자부터
+                            }
+                            current.subTimings.push({ text: nextItem.text, time: nextItem.time });
+                        }
+
                         j++;
                     } else {
                         break;
@@ -323,10 +364,25 @@
             if (!this.lyricsBox) return;
             this.lyricsBox.innerHTML = '';
             this.domLines = [];
+            
             this.lyrics.forEach(line => {
                 const div = document.createElement('div');
                 div.className = 'ap-line';
-                div.innerHTML = `<span>${line.text}</span>`;
+                
+                // [New] 하이브리드 모드 렌더링
+                if (this.config.viewMode === 'hybrid' && line.subTimings && line.subTimings.length > 0) {
+                    const spanWrapper = document.createElement('span');
+                    let htmlContent = '';
+                    line.subTimings.forEach(sub => {
+                        htmlContent += `<span class="ap-char" data-start="${sub.time}">${sub.text}</span>`;
+                    });
+                    spanWrapper.innerHTML = htmlContent;
+                    div.appendChild(spanWrapper);
+                } else {
+                    // 기본 렌더링
+                    div.innerHTML = `<span>${line.text}</span>`;
+                }
+
                 if (line.needsCountdown) {
                     const dots = document.createElement('div');
                     dots.className = 'ap-dots';
@@ -354,6 +410,7 @@
             this.domLines.forEach((div, i) => {
                 div.classList.remove('active', 'near', 'show-cnt');
                 
+                // 카운트다운 로직
                 if (i > idx && this.lyrics[i].needsCountdown) {
                     const remain = this.lyrics[i].time - time;
                     if (remain > 0 && remain <= this.config.anticipation) {
@@ -368,6 +425,20 @@
 
                 if (i === idx) {
                     div.classList.add('active');
+                    
+                    // [New] 하이브리드 모드: 글자별 애니메이션 (점 찍기)
+                    if (this.config.viewMode === 'hybrid') {
+                        const chars = div.querySelectorAll('.ap-char');
+                        chars.forEach(char => {
+                            const startTime = parseFloat(char.dataset.start);
+                            if (time >= startTime) {
+                                char.classList.add('played');
+                            } else {
+                                char.classList.remove('played');
+                            }
+                        });
+                    }
+
                 } else if (Math.abs(i - idx) <= 2) {
                     div.classList.add('near');
                     div.style.transform = 'scale(0.9)';

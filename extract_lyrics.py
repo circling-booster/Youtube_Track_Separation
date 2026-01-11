@@ -21,7 +21,7 @@ class BugsLyricsCrawler:
         logger.info(f"[Crawler] 검색 요청: {song_name}, 가수: {artist_name}, 앨범: {album_name}")
         
         try:
-            search_params = {'q': song_name}
+            search_params = {'q': song_name + '' + artist_name}
             response = requests.get(
                 self.base_search_url,
                 params=search_params,
@@ -52,8 +52,8 @@ class BugsLyricsCrawler:
                 logger.info(f"[Crawler] 매칭 성공: {matched_track['title']} - {matched_track['artist']}")
                 return matched_track
             else:
-                logger.info("[Crawler] 정확한 매칭 실패, 첫 번째 결과 반환")
-                return self._extract_track_info(rows[0])
+                logger.info("[Crawler] 정확한 매칭 실패, 가져오지 않음")
+                return None
             
         except Exception as e:
             logger.error(f"[Crawler] 검색 중 오류: {e}")
