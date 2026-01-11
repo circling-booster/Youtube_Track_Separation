@@ -66,7 +66,7 @@ class TrackSeparationWorkflow:
             if not audio_file: raise Exception("오디오 다운로드 실패")
 
             # [2단계] Demucs 분리 (VRAM 관리 핵심)
-            if progress_callback: progress_callback(20, 'AI 오디오 분리 중...')
+            if progress_callback: progress_callback(20, 'AI 오디오 분리 중 (GPU)...')
             
             processor = DemucsProcessor(str(self.download_dir))
             separation_dir = work_dir / 'separated'
@@ -135,12 +135,15 @@ class TrackSeparationWorkflow:
             # [5단계] Whisper 정렬 (텍스트 존재 시)
             # Demucs 메모리가 해제된 상태에서 실행됨
             if lyrics_text and len(lyrics_text) > 10 and vocal_absolute_path:
-                if progress_callback: progress_callback(85, 'AI 싱크 정렬 중...')
+                if progress_callback: progress_callback(85, 'AI 싱크 정렬 중 (Whisper)...')
                 try:
+                    # 안전을 위해 VRAM 체크 또는 CPU Fallback 고려 가능하나 여기선 CUDA 우선
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                    
                     lrc = align_lyrics(
                         vocal_absolute_path, 
                         lyrics_text, 
-                        device='cuda' if torch.cuda.is_available() else 'cpu'
+                        device=device
                     )
                     if lrc:
                         result['lyrics_lrc'] = lrc
@@ -215,7 +218,7 @@ class TrackSeparationWorkflow:
             candidates = list(output_dir.glob('*.vtt'))
             if not candidates: return None
             
-            # 한국어 우선
+            # 한국어 우선 매칭
             for f in candidates:
                 if '.ko' in f.name: return str(f)
             return str(candidates[0])

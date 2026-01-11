@@ -1,6 +1,6 @@
 /**
  * YouTube Track Separation - Main Controller
- * 수정사항: 10초 자동 시작 카운트다운 로직 완전 제거
+ * 수정사항: 메타데이터 추출 연동 및 자동화 로직 정리
  */
 
 (function () {
@@ -13,9 +13,7 @@
       this.player = null;
       this.lyricsEngine = null;
       
-      // 상태 관리
       this.lastUrl = location.href;
-      
       this.init();
     }
 
@@ -27,7 +25,6 @@
       new MutationObserver(() => this.checkNavigation()).observe(document.body, { childList: true, subtree: true });
       setInterval(() => this.checkNavigation(), 1000);
       
-      // 초기 실행
       this.checkNavigation();
     }
 
@@ -50,25 +47,19 @@
         console.log(`[App] Video changed: ${this.videoId} -> ${newVideoId}`);
         this.cleanup(); // 이전 리소스 정리
         this.videoId = newVideoId;
-        
         this.tryAddButton();
-        // 자동 시작 타이머 로직 제거됨
       }
     }
 
     cleanup() {
-        // 플레이어 정리
         if (this.player) {
             this.player.destroy();
             this.player = null;
         }
-        
-        // UI 및 소켓 정리
         document.getElementById('aiplugs-lyrics-overlay')?.remove();
         document.getElementById('yt-sep-setup-panel')?.remove();
         document.getElementById('yt-custom-player-ui')?.remove();
         document.getElementById('yt-sep-minimized-icon')?.remove();
-        // 카운트다운 UI 정리 로직 제거됨
 
         if (this.socket) {
             this.socket.disconnect();
@@ -76,8 +67,6 @@
         }
         this.isProcessing = false;
     }
-
-    // --- UI Styles ---
 
     injectGlobalStyles() {
       if (document.getElementById('yt-sep-main-style')) return;
@@ -90,10 +79,6 @@
             cursor: pointer; font-weight: 600; font-size: 12px; transition: 0.2s;
         }
         .yt-sep-btn:hover { background: #65b8ff; }
-        .yt-sep-btn.cancel { background: #444; color: #fff; }
-        .yt-sep-btn.cancel:hover { background: #555; }
-        
-        /* 카운트다운 관련 스타일 제거됨 */
       `;
       document.head.appendChild(style);
     }
@@ -136,7 +121,7 @@
     }
 
     startProcessLogic() {
-        // 메타데이터 추출 및 소스 타입 식별
+        // 메타데이터 및 소스 타입 식별 (extract_info.js)
         let meta = window.YoutubeMetaExtractor ? window.YoutubeMetaExtractor.getMusicInfo() : { sourceType: 'general' };
         this.processVideo(meta);
     }
@@ -145,7 +130,6 @@
         if (!this.videoId || this.isProcessing) return;
         this.isProcessing = true;
         
-        // UI가 열려있지 않다면 염
         this.openSetupPanel();
 
         const startBtn = document.getElementById('sep-start-btn');
@@ -164,7 +148,6 @@
             });
         }
 
-        // 요청 전송
         const modelSelect = document.getElementById('sep-model');
         const model = modelSelect ? modelSelect.value : 'htdemucs';
         
@@ -191,10 +174,9 @@
         this.isProcessing = false;
         document.getElementById('yt-sep-setup-panel')?.remove();
         
-        // 가사 엔진 로드
         this.initLyricsEngine(data.lyrics_lrc);
         
-        // 플레이어 로드
+        // 하이브리드 플레이어 로드
         if (window.AiPlugsAudioPlayer) {
             this.player = new window.AiPlugsAudioPlayer(data.tracks, (currentTime) => {
                 if (this.lyricsEngine) this.lyricsEngine.update(currentTime);
@@ -210,7 +192,6 @@
 
             overlay = document.createElement('div');
             overlay.id = 'aiplugs-lyrics-overlay';
-            // 기본 스타일 주입
             overlay.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 2147483640; pointer-events: none; overflow: hidden;`;
             document.body.appendChild(overlay);
 
@@ -223,6 +204,5 @@
     }
   }
 
-  // 유튜브 페이지 로드 타이밍 고려하여 지연 실행
   setTimeout(() => { new YouTubeTrackSeparator(); }, 2000);
 })();
